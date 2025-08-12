@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
-
-const VERSAO = '0.0.0'; // Versão real do package.json
+import { APP_VERSION } from '../config/version';
 
 export default function Login({ onLogin }) {
   const [username, setUsername] = useState('');
@@ -105,7 +104,7 @@ export default function Login({ onLogin }) {
               {loading ? 'Acessando...' : 'Acessar'}
             </button>
           </form>
-          <div className="text-center text-xs mt-8" style={{ color: '#9ca3af' }}>Versão {VERSAO}</div>
+          <div className="text-center text-xs mt-8" style={{ color: '#9ca3af' }}>Versão {APP_VERSION}</div>
         </div>
       </div>
     </div>

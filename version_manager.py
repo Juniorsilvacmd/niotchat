@@ -109,6 +109,25 @@ class VersionManager:
             telegram_path.write_text(content)
             print(f"✅ telegram_service.py atualizado para versão {new_version}")
     
+    def update_frontend_version_config(self, new_version):
+        """Atualiza a versão no arquivo de configuração do frontend"""
+        version_config_path = Path("frontend/frontend/src/config/version.js")
+        if version_config_path.exists():
+            content = version_config_path.read_text()
+            
+            # Atualizar versão
+            content = re.sub(r"export const APP_VERSION = '[^']*'", f"export const APP_VERSION = '{new_version}'", content)
+            
+            # Atualizar data de build
+            from datetime import datetime
+            build_date = datetime.now().strftime("%Y-%m-%d")
+            content = re.sub(r"export const BUILD_DATE = '[^']*'", f"export const BUILD_DATE = '{build_date}'", content)
+            
+            version_config_path.write_text(content)
+            print(f"✅ Arquivo de configuração do frontend atualizado para versão {new_version}")
+        else:
+            print("⚠️  Arquivo de configuração do frontend não encontrado")
+    
     def create_version_info(self, new_version):
         """Cria um arquivo de informações de versão"""
         version_info = f'''# NioChat - Informações de Versão
@@ -163,10 +182,12 @@ python version_manager.py [major|minor|patch]
         self.update_pnpm_lock(new_version)
         self.update_django_settings(new_version)
         self.update_telegram_service(new_version)
+        self.update_frontend_version_config(new_version)
         self.create_version_info(new_version)
         
         print(f"\n🎉 Versão atualizada com sucesso para {new_version}!")
         print(f"📝 Execute 'git add .' e 'git commit -m \"v{new_version}\"' para salvar as mudanças")
+        print(f"🔨 Execute 'npm run build' no diretório frontend/frontend para recompilar")
     
     def show_current_version(self):
         """Mostra a versão atual"""
