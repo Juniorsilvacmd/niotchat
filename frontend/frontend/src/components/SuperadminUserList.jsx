@@ -8,14 +8,14 @@ export default function SuperadminUserList() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showModal, setShowModal] = useState(false);
-  const [companies, setCompanies] = useState([]);
+  const [provedores, setProvedores] = useState([]);
   const [form, setForm] = useState({
     username: '',
     email: '',
     password: '',
     user_type: 'agent',
     is_active: true,
-    company: '',
+    provedor_id: '',
   });
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState('');
@@ -46,18 +46,20 @@ export default function SuperadminUserList() {
   }, [success]);
 
   useEffect(() => {
-    async function fetchCompanies() {
+    async function fetchProvedores() {
       try {
         const token = localStorage.getItem('token');
-        const res = await axios.get('/api/companies/', {
+        const res = await axios.get('/api/provedores/', {
           headers: { Authorization: `Token ${token}` }
         });
-        setCompanies(res.data.results || res.data);
+        const provedoresData = res.data.results || res.data;
+        setProvedores(provedoresData);
       } catch (e) {
-        setCompanies([]);
+        console.error('Erro ao buscar provedores:', e);
+        setProvedores([]);
       }
     }
-    if (showModal) fetchCompanies();
+    if (showModal) fetchProvedores();
   }, [showModal]);
 
   const handleChange = (e) => {
@@ -82,37 +84,15 @@ export default function SuperadminUserList() {
         password: form.password,
         user_type: form.user_type,
         is_active: form.is_active,
+        provedor_id: form.provedor_id, // Incluir provedor_id para associação automática
       }, {
         headers: { Authorization: `Token ${token}` }
       });
-      // Vincula à empresa
-      if (form.company) {
-        try {
-          await axios.post('/api/company-users/', {
-            user: userRes.data.id,
-            company: form.company, // Corrigido para 'company'
-            role: form.user_type, // garantir que seja 'admin', 'agent', etc
-            is_active: true,
-          }, {
-            headers: { Authorization: `Token ${token}` }
-          });
-        } catch (err) {
-          let msg = 'Usuário criado, mas não foi possível vincular à empresa.';
-          if (err.response && err.response.data) {
-            if (typeof err.response.data === 'string') msg += ' ' + err.response.data;
-            else if (err.response.data.detail) msg += ' ' + err.response.data.detail;
-            else msg += ' ' + JSON.stringify(err.response.data);
-          }
-          setSuccess(msg);
-          setShowModal(false);
-          setForm({ username: '', email: '', password: '', user_type: 'agent', is_active: true, company: '' });
-          setSaving(false);
-          return;
-        }
-      }
-      setSuccess('Usuário criado com sucesso!');
-      setShowModal(false);
-      setForm({ username: '', email: '', password: '', user_type: 'agent', is_active: true, company: '' });
+      // Não é necessário criar CompanyUser manualmente - o backend já faz a associação
+      console.log('Usuário criado e associado ao provedor com sucesso!');
+             setSuccess('Usuário criado com sucesso!');
+       setShowModal(false);
+       setForm({ username: '', email: '', password: '', user_type: 'agent', is_active: true, provedor_id: '' });
     } catch (e) {
       let msg = 'Erro ao criar usuário.';
       if (e.response && e.response.data) {
@@ -183,7 +163,7 @@ export default function SuperadminUserList() {
               <Users className="w-8 h-8 mr-3" />
               Usuários do Sistema
             </h1>
-            <p className="text-muted-foreground">Veja todos os usuários, empresas, status e último acesso</p>
+            <p className="text-muted-foreground">Veja todos os usuários, provedores, status e último acesso</p>
           </div>
           <button
             className="flex items-center gap-2 bg-primary text-white px-4 py-2 rounded font-medium shadow hover:bg-primary/90"
@@ -204,7 +184,7 @@ export default function SuperadminUserList() {
                   <th className="px-4 py-2 text-left">Usuário</th>
                   <th className="px-4 py-2 text-left">Email</th>
                   <th className="px-4 py-2 text-left">Tipo</th>
-                  <th className="px-4 py-2 text-left">Empresas</th>
+                                      <th className="px-4 py-2 text-left">Provedores</th>
                   <th className="px-4 py-2 text-center">Ativo</th>
                   <th className="px-4 py-2 text-center">Online</th>
                   <th className="px-4 py-2 text-center">Último acesso</th>
@@ -223,12 +203,12 @@ export default function SuperadminUserList() {
                     <td className="px-4 py-2">{user.email || '-'}</td>
                     <td className="px-4 py-2">{user.user_type}</td>
                     <td className="px-4 py-2">
-                      {(user.company_users || []).length === 0 && (
-                        <span className="text-gray-400 text-xs">Sem empresa</span>
+                      {(user.provedores_admin || []).length === 0 && (
+                        <span className="text-gray-400 text-xs">Sem provedor</span>
                       )}
-                      {(user.company_users || []).map((c, i) => (
+                      {(user.provedores_admin || []).map((p, i) => (
                         <span key={i} className="inline-flex items-center gap-1 bg-blue-900/80 text-blue-100 rounded px-2 py-1 mr-1 text-xs font-semibold">
-                          <Building className="w-3 h-3" /> {c.company?.name || c.name || '-'}
+                          <Building className="w-3 h-3" /> {p.nome} (Admin)
                         </span>
                       ))}
                     </td>
@@ -398,12 +378,15 @@ export default function SuperadminUserList() {
                   </select>
                 </div>
                 <div>
-                  <label className="block font-medium mb-1 text-gray-200">Empresa</label>
-                  <select name="company" value={form.company} onChange={handleChange} className="input w-full bg-[#181b20] text-white border border-border rounded px-3 py-2">
+                  <label className="block font-medium mb-1 text-gray-200">Provedor</label>
+                  <select name="provedor_id" value={form.provedor_id} onChange={handleChange} className="input w-full bg-[#181b20] text-white border border-border rounded px-3 py-2">
                     <option value="">Selecione...</option>
-                    {companies.map(c => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
+                    {provedores.map(provedor => (
+                      <option key={provedor.id} value={provedor.id}>{provedor.nome}</option>
                     ))}
+                    {provedores.length === 0 && (
+                      <option disabled>Carregando provedores...</option>
+                    )}
                   </select>
                 </div>
                 <div className="flex items-center gap-2">

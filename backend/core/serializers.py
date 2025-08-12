@@ -1,6 +1,6 @@
 import requests
 from rest_framework import serializers
-from .models import Canal, Provedor, Label, User, AuditLog, SystemConfig, Company
+from .models import Canal, Provedor, Label, User, AuditLog, SystemConfig, Company, CompanyUser
 
 class ProvedorSerializer(serializers.ModelSerializer):
     sgp_url = serializers.SerializerMethodField()
@@ -98,10 +98,10 @@ class CompanySerializer(serializers.ModelSerializer):
             'id', 'name', 'slug', 'logo', 'description', 'website', 
             'email', 'phone', 'address', 'is_active', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
 
 class UserSerializer(serializers.ModelSerializer):
     provedor_id = serializers.SerializerMethodField()
+    provedores_admin = serializers.SerializerMethodField()
     password = serializers.CharField(write_only=True, required=False)
     
     class Meta:
@@ -110,13 +110,25 @@ class UserSerializer(serializers.ModelSerializer):
             'id', 'username', 'email', 'first_name', 'last_name', 'user_type',
             'avatar', 'phone', 'is_online', 'last_seen', 'created_at', 'updated_at',
             'is_active', 'last_login', 'permissions', 'password',
-            'provedor_id',
+            'provedor_id', 'provedores_admin',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at', 'last_login']
     
     def get_provedor_id(self, obj):
         provedor = obj.provedores_admin.first() if hasattr(obj, 'provedores_admin') else None
         return provedor.id if provedor else None
+    
+    def get_provedores_admin(self, obj):
+        """Retorna informações completas sobre os provedores do usuário"""
+        provedores = obj.provedores_admin.all()
+        return [
+            {
+                'id': p.id,
+                'nome': p.nome,
+                'is_active': p.is_active
+            }
+            for p in provedores
+        ]
     
     def create(self, validated_data):
         password = validated_data.pop('password', None)
@@ -133,6 +145,56 @@ class UserSerializer(serializers.ModelSerializer):
             user.set_password(password)
             user.save()
         return user
+
+
+class UserCreateSerializer(serializers.ModelSerializer):
+    """Serializer específico para criação de usuários com seleção de provedor"""
+    password = serializers.CharField(write_only=True, required=True)
+    provedor_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
+    
+    class Meta:
+        model = User
+        fields = [
+            'username', 'email', 'first_name', 'last_name', 'user_type',
+            'avatar', 'phone', 'is_active', 'permissions', 'password', 'provedor_id'
+        ]
+    
+    def create(self, validated_data):
+        provedor_id = validated_data.pop('provedor_id', None)
+        password = validated_data.pop('password', None)
+        
+        # Criar usuário
+        user = super().create(validated_data)
+        
+        # Definir senha
+        if password:
+            user.set_password(password)
+            user.save()
+        
+        # Associar ao provedor se especificado
+        if provedor_id:
+            try:
+                provedor = Provedor.objects.get(id=provedor_id)
+                provedor.admins.add(user)
+            except Provedor.DoesNotExist:
+                pass  # Silenciosamente ignora se o provedor não existir
+        
+        return user
+
+class CompanyUserSerializer(serializers.ModelSerializer):
+    user = UserSerializer(read_only=True)
+    company = CompanySerializer(read_only=True)
+    
+    class Meta:
+        model = CompanyUser
+        fields = ['id', 'user', 'company', 'role', 'is_active', 'joined_at']
+        read_only_fields = ['id', 'joined_at']
+
+class CompanyUserCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CompanyUser
+        fields = ['id', 'user', 'company', 'role', 'is_active', 'joined_at']
+        read_only_fields = ['id', 'joined_at']
 
 class CanalSerializer(serializers.ModelSerializer):
     provedor = ProvedorSerializer(read_only=True)
@@ -259,4 +321,3 @@ class CanalSerializer(serializers.ModelSerializer):
                     data['betaStatus'] = None
         
         return data
-

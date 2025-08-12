@@ -37,6 +37,40 @@ class UserPermissionsForm(forms.ModelForm):
             )
 
 
+class UserCreationForm(forms.ModelForm):
+    """Formulário customizado para criação de usuários com seleção de provedor"""
+    password1 = forms.CharField(label='Senha', widget=forms.PasswordInput)
+    password2 = forms.CharField(label='Confirmar Senha', widget=forms.PasswordInput)
+    provedor = forms.ModelChoiceField(
+        queryset=Provedor.objects.filter(is_active=True),
+        required=False,
+        empty_label="Selecione um provedor (opcional)",
+        help_text="Selecione o provedor ao qual este usuário será associado"
+    )
+    
+    class Meta:
+        model = User
+        fields = ('username', 'email', 'first_name', 'last_name', 'user_type', 'provedor')
+    
+    def clean_password2(self):
+        password1 = self.cleaned_data.get("password1")
+        password2 = self.cleaned_data.get("password2")
+        if password1 and password2 and password1 != password2:
+            raise forms.ValidationError("As senhas não coincidem")
+        return password2
+    
+    def save(self, commit=True):
+        user = super().save(commit=False)
+        user.set_password(self.cleaned_data["password1"])
+        if commit:
+            user.save()
+            # Associar usuário ao provedor se selecionado
+            provedor = self.cleaned_data.get('provedor')
+            if provedor:
+                provedor.admins.add(user)
+        return user
+
+
 class CustomUserChangeForm(UserChangeForm):
     password = ReadOnlyPasswordHashField(
         label="Senha",
@@ -63,17 +97,27 @@ class CustomAdminSite(AdminSite):
 
     def usuarios_sistema_view(self, request):
         """View para mostrar todos os usuários do sistema com informações detalhadas"""
-        # Buscar todos os usuários com informações de empresa
+        # Buscar todos os usuários com informações de empresa e provedores
         users_with_companies = []
         
-        for user in User.objects.all().select_related().prefetch_related('company_users__company'):
+        for user in User.objects.all().select_related().prefetch_related('company_users__company', 'provedores_admin'):
             # Buscar empresas do usuário
             companies = []
             for company_user in user.company_users.all():
                 companies.append({
                     'name': company_user.company.name,
                     'role': company_user.get_role_display(),
-                    'is_active': company_user.is_active
+                    'is_active': company_user.is_active,
+                    'type': 'Empresa'
+                })
+            
+            # Buscar provedores do usuário
+            for provedor in user.provedores_admin.all():
+                companies.append({
+                    'name': provedor.nome,
+                    'role': 'Admin',
+                    'is_active': provedor.is_active,
+                    'type': 'Provedor'
                 })
             
             # Determinar status online (últimos 5 minutos)
@@ -111,6 +155,7 @@ admin_site = CustomAdminSite(name='niochat_admin')
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
     form = CustomUserChangeForm
+    add_form = UserCreationForm
     list_display = ('username', 'email', 'user_type', 'is_online', 'is_active', 'date_joined', 'permissions_display')
     list_filter = ('user_type', 'is_online', 'is_active', 'date_joined')
     search_fields = ('username', 'email', 'first_name', 'last_name')
@@ -142,6 +187,15 @@ class UserAdmin(BaseUserAdmin):
             'classes': ('wide',),
             'fields': ('username', 'password1', 'password2'),
         }),
+        ('Informações Pessoais', {
+            'classes': ('wide',),
+            'fields': ('first_name', 'last_name', 'email', 'user_type'),
+        }),
+        ('Associação', {
+            'classes': ('wide',),
+            'fields': ('provedor',),
+            'description': 'Associe este usuário a um provedor se necessário'
+        }),
     )
     
     def permissions_display(self, obj):
@@ -160,6 +214,31 @@ class UserAdmin(BaseUserAdmin):
             return ', '.join(readable_permissions) + ('...' if len(obj.permissions) > 3 else '')
         return 'Nenhuma'
     permissions_display.short_description = 'Permissões'
+    
+    actions = ['associar_provedor_mega_fibra']
+    
+    def associar_provedor_mega_fibra(self, request, queryset):
+        """Action para associar usuários ao provedor Mega Fibra"""
+        try:
+            provedor = Provedor.objects.get(nome__icontains='Mega Fibra')
+            count = 0
+            for user in queryset:
+                if user not in provedor.admins.all():
+                    provedor.admins.add(user)
+                    count += 1
+            
+            if count == 1:
+                message = f"1 usuário foi associado ao provedor {provedor.nome}"
+            else:
+                message = f"{count} usuários foram associados ao provedor {provedor.nome}"
+            
+            self.message_user(request, message)
+        except Provedor.DoesNotExist:
+            self.message_user(request, "Provedor 'Mega Fibra' não encontrado", level='ERROR')
+        except Exception as e:
+            self.message_user(request, f"Erro ao associar usuários: {str(e)}", level='ERROR')
+    
+    associar_provedor_mega_fibra.short_description = "Associar ao provedor Mega Fibra"
 
 
 @admin.register(Label)

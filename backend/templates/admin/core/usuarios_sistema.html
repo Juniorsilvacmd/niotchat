@@ -127,7 +127,7 @@
             <tr>
                 <th>👤 Usuário</th>
                 <th>📧 Email</th>
-                <th>🏢 Empresas</th>
+                <th>🏢 Empresas/Provedores</th>
                 <th>👑 Tipo</th>
                 <th>🟢 Status</th>
                 <th>🌐 Online</th>
@@ -147,10 +147,11 @@
                         {% for company in user_info.companies %}
                             <span class="empresa-badge {% if not company.is_active %}empresa-inativa{% endif %}">
                                 {{ company.name }} ({{ company.role }})
+                                <small style="font-size: 10px; opacity: 0.8;">{{ company.type }}</small>
                             </span>
                         {% endfor %}
                     {% else %}
-                        <span style="color: #999;">Sem empresa</span>
+                        <span style="color: #999;">Sem empresa/provedor</span>
                     {% endif %}
                 </td>
                 <td>{{ user_info.user.get_user_type_display }}</td>
@@ -188,7 +189,7 @@
         <li><strong>⚫ Offline:</strong> Usuário inativo há mais de 5 minutos</li>
         <li><strong>Ativo:</strong> Conta de usuário habilitada</li>
         <li><strong>Inativo:</strong> Conta de usuário desabilitada</li>
-        <li><strong>Empresas:</strong> Empresas associadas ao usuário e suas funções</li>
+        <li><strong>Empresas/Provedores:</strong> Empresas e provedores associados ao usuário e suas funções</li>
     </ul>
 </div>
 {% endblock %} 

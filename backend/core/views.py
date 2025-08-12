@@ -2,8 +2,8 @@ from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.contrib.auth import authenticate, login, logout
-from .models import User, Label, SystemConfig, Provedor, Canal, Company
-from .serializers import UserSerializer, LabelSerializer, SystemConfigSerializer, ProvedorSerializer, AuditLogSerializer, CanalSerializer, CompanySerializer
+from .models import User, Label, SystemConfig, Provedor, Canal, Company, CompanyUser
+from .serializers import UserSerializer, LabelSerializer, SystemConfigSerializer, ProvedorSerializer, AuditLogSerializer, CanalSerializer, CompanySerializer, CompanyUserSerializer, CompanyUserCreateSerializer
 from rest_framework.authtoken.models import Token
 from rest_framework.views import APIView
 from django.views.decorators.csrf import csrf_exempt
@@ -32,6 +32,12 @@ class UserViewSet(viewsets.ModelViewSet):
     queryset = models.User.objects.all()
     serializer_class = UserSerializer
     permission_classes = [permissions.IsAuthenticated]
+    
+    def get_serializer_class(self):
+        if self.action == 'create':
+            from .serializers import UserCreateSerializer
+            return UserCreateSerializer
+        return UserSerializer
     
     def get_queryset(self):
         user = self.request.user
@@ -97,16 +103,23 @@ class UserViewSet(viewsets.ModelViewSet):
         request = self.request
         ip = request.META.get('REMOTE_ADDR') if hasattr(request, 'META') else None
         created_user = serializer.save()
-        # Descobrir provedor do usuário criado
-        provedor = Provedor.objects.filter(admins=user).first()
-        if provedor:
-            provedor.admins.add(created_user)  # Vincula o novo usuário ao provedor
-        provedor_nome = provedor.nome if provedor else 'Desconhecido'
+        
+        # Verificar se o usuário foi associado a um provedor específico
+        provedor_associado = created_user.provedores_admin.first()
+        
+        # Se não foi associado a um provedor específico, associar ao provedor do usuário criador
+        if not provedor_associado:
+            provedor = Provedor.objects.filter(admins=user).first()
+            if provedor:
+                provedor.admins.add(created_user)
+                provedor_associado = provedor
+        
+        provedor_nome = provedor_associado.nome if provedor_associado else 'Desconhecido'
         models.AuditLog.objects.create(
             user=user,
             action='create',
             ip_address=ip,
-            details=f"Provedor {provedor_nome} criou novo usuário: {created_user.username}"
+            details=f"Usuário criado: {created_user.username} - Provedor: {provedor_nome}"
         )
 
     def perform_destroy(self, instance):
@@ -1625,6 +1638,61 @@ class CompanyViewSet(viewsets.ModelViewSet):
             details=f'Empresa excluída: {company_name}',
             ip_address=self.request.META.get('REMOTE_ADDR')
         )
+        instance.delete()
+
+
+class CompanyUserViewSet(viewsets.ModelViewSet):
+    queryset = CompanyUser.objects.all()
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_serializer_class(self):
+        if self.action in ['create', 'update', 'partial_update']:
+            return CompanyUserCreateSerializer
+        return CompanyUserSerializer
+    
+    def get_queryset(self):
+        user = self.request.user
+        if user.user_type == 'superadmin':
+            return CompanyUser.objects.all()
+        else:
+            # Usuários não-superadmin veem apenas relacionamentos relacionados a eles
+            return CompanyUser.objects.filter(user=user)
+    
+    def perform_create(self, serializer):
+        user = self.request.user
+        company_user = serializer.save()
+        
+        # Log da criação
+        models.AuditLog.objects.create(
+            user=user,
+            action='create',
+            details=f'Criou relacionamento CompanyUser: {company_user.user.username} - {company_user.company.name}',
+            ip_address=self.request.META.get('REMOTE_ADDR')
+        )
+    
+    def perform_update(self, serializer):
+        user = self.request.user
+        company_user = serializer.save()
+        
+        # Log da atualização
+        models.AuditLog.objects.create(
+            user=user,
+            action='edit',
+            details=f'Atualizou relacionamento CompanyUser: {company_user.user.username} - {company_user.company.name}',
+            ip_address=self.request.META.get('REMOTE_ADDR')
+        )
+    
+    def perform_destroy(self, instance):
+        user = self.request.user
+        
+        # Log da exclusão
+        models.AuditLog.objects.create(
+            user=user,
+            action='delete',
+            details=f'Removeu relacionamento CompanyUser: {instance.user.username} - {instance.company.name}',
+            ip_address=self.request.META.get('REMOTE_ADDR')
+        )
+        
         instance.delete()
 
 

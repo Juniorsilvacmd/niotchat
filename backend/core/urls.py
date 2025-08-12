@@ -8,6 +8,7 @@ router.register(r'labels', views.LabelViewSet)
 router.register(r'provedores', views.ProvedorViewSet)
 router.register(r'canais', views.CanalViewSet)
 router.register(r'companies', views.CompanyViewSet)
+router.register(r'company-users', views.CompanyUserViewSet)
 router.register(r'system-config', views.SystemConfigViewSet, basename='system-config')
 router.register(r'audit-logs', views.AuditLogViewSet)
 

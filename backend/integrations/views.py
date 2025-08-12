@@ -883,9 +883,11 @@ def webhook_evolution_uazapi(request):
             print(f"DEBUG: Conteúdo da mensagem respondida: {reply_to_content}")
         
         # Agora converter content para string se for um objeto
+        print(f"🔍 DEBUG: Antes da conversão - content = {content} (tipo: {type(content)})")
         if isinstance(content, dict) and 'text' in content:
             content = content['text']
             print(f"DEBUG: Conteúdo extraído do objeto: {content}")
+        print(f"🔍 DEBUG: Após conversão - content = {content} (tipo: {type(content)})")
         
         # Detectar tipo de mensagem
         message_type = msg_data.get('type') or msg_data.get('messageType') or 'text'
@@ -910,18 +912,25 @@ def webhook_evolution_uazapi(request):
             print(f"DEBUG: MENSAGEM DE ÁUDIO DETECTADA!")
         
         # Para mensagens de mídia, não usar o JSON bruto como conteúdo
+        print(f"🔍 DEBUG: Antes do processamento de mídia - content = '{content}' (tipo: {type(content)})")
         if (message_type in ['audio', 'image', 'video', 'document', 'sticker', 'ptt', 'media'] or
             message_type in ['AudioMessage', 'ImageMessage', 'VideoMessage', 'DocumentMessage'] or
             media_type in ['ptt', 'audio', 'image', 'video', 'document', 'sticker'] or
             is_audio_message):
             
             # Se o conteúdo for um JSON (objeto), não usar como texto
+            print(f"🔍 DEBUG: Verificando se content é JSON - content = {content} (tipo: {type(content)})")
             if isinstance(content, dict) or (isinstance(content, str) and content.startswith('{')):
+                print(f"🔍 DEBUG: Content é JSON, definindo como None")
                 content = None
                 print(f"DEBUG: Conteúdo JSON detectado")
+            else:
+                print(f"🔍 DEBUG: Content não é JSON, mantendo como: {content}")
             
             # Definir conteúdo apropriado para cada tipo de mídia
+            print(f"🔍 DEBUG: Verificando se content está vazio - content = '{content}'")
             if not content:
+                print(f"🔍 DEBUG: Content está vazio, definindo conteúdo apropriado para mídia")
                 if (message_type in ['audio', 'ptt', 'AudioMessage'] or 
                     media_type in ['ptt', 'audio'] or is_audio_message):
                     content = 'Mensagem de voz'
@@ -936,10 +945,21 @@ def webhook_evolution_uazapi(request):
                 else:
                     content = f'Mídia ({message_type})'
                 print(f"DEBUG: Conteúdo definido para mídia: {content}")
+            else:
+                print(f"🔍 DEBUG: Content não está vazio, mantendo como: '{content}'")
         else:
             # Para mensagens de texto, se não houver conteúdo, usar placeholder
+            print(f"🔍 DEBUG: Mensagem de texto - content = '{content}'")
             if not content:
+                print(f"🔍 DEBUG: Content vazio para texto, definindo placeholder")
                 content = 'Mensagem de texto'
+            else:
+                print(f"🔍 DEBUG: Content não vazio para texto, mantendo como: '{content}'")
+        
+        print(f"🔍 DEBUG: Após processamento de mídia - content = '{content}' (tipo: {type(content)})")
+        
+        # Log final do conteúdo antes de salvar
+        print(f"DEBUG: Conteúdo final antes de salvar: '{content}' (tipo: {type(content)})")
 
         # Filtrar apenas eventos de mensagem
         mensagem_eventos = ['message', 'messages', 'message_received', 'incoming_message', 'mensagem', 'mensagens']
@@ -1662,11 +1682,28 @@ def webhook_evolution_uazapi(request):
             }
         )
         # 1. Acionar IA para resposta automática
-        ia_result = openai_service.generate_response_sync(
-            mensagem=content,
-            provedor=provedor,
-            contexto={}
-        )
+        print(f"🔍 DEBUG: Verificando conteúdo antes da IA:")
+        print(f"🔍 DEBUG: content = '{content}' (tipo: {type(content)})")
+        print(f"🔍 DEBUG: content is None: {content is None}")
+        print(f"🔍 DEBUG: content == '': {content == ''}")
+        
+        if content and str(content).strip():  # Verificar se há conteúdo válido antes de chamar a IA
+            print(f"🤖 IA: Acionando IA para mensagem: {content[:50]}...")
+            try:
+                ia_result = openai_service.generate_response_sync(
+                    mensagem=str(content),  # Garantir que é string
+                    provedor=provedor,
+                    contexto={'conversation': conversation}
+                )
+                print(f"🤖 IA: Resultado: {ia_result}")
+            except Exception as e:
+                print(f"❌ ERRO na IA: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                ia_result = {'success': False, 'erro': f'Erro na IA: {str(e)}'}
+        else:
+            print("⚠️ IA: Mensagem sem conteúdo válido, pulando geração de resposta")
+            ia_result = {'success': False, 'erro': 'Mensagem sem conteúdo válido'}
         resposta_ia = ia_result.get('resposta') if ia_result.get('success') else None
         # 2. Enviar resposta para Uazapi (WhatsApp)
         import requests

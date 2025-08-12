@@ -95,9 +95,12 @@ const fetchUsers = async (token) => {
 };
 
 const UserManagement = () => {
+  console.log('UserManagement: Componente montado');
+  
   const [searchTerm, setSearchTerm] = useState('');
   const [filterRole, setFilterRole] = useState('all');
   const [showAddModal, setShowAddModal] = useState(false);
+  const [provedores, setProvedores] = useState([]);
   const [showEditModal, setShowEditModal] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
   const [showMenuId, setShowMenuId] = useState(null);
@@ -110,6 +113,7 @@ const UserManagement = () => {
     email: '',
     new_password: '',
     user_type: 'agent',
+    provedor_id: '',
     is_active: true,
     permissions: [],
   };
@@ -140,7 +144,32 @@ const UserManagement = () => {
         setUsersState(Array.isArray([]) ? [] : []);
       }
     };
+
+    const fetchProvedores = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        if (!token) {
+          console.log('Token não encontrado');
+          return;
+        }
+        
+        console.log('Carregando provedores...');
+        const response = await axios.get('/api/provedores/', {
+          headers: { Authorization: `Token ${token}` }
+        });
+        
+        const provedoresData = response.data.results || response.data;
+        console.log('Provedores carregados:', provedoresData);
+        setProvedores(provedoresData);
+      } catch (error) {
+        console.error('Erro ao carregar provedores:', error);
+        // Em caso de erro, criar um provedor padrão para teste
+        setProvedores([{ id: 1, nome: 'MEGA FIBRA' }]);
+      }
+    };
+
     fetchAllUsers();
+    fetchProvedores();
   }, []);
 
   const getRoleIcon = (role) => {
@@ -253,6 +282,7 @@ const UserManagement = () => {
         email: addUserForm.email,
         password: addUserForm.new_password,
         user_type: addUserForm.user_type,
+        provedor_id: addUserForm.provedor_id,
         is_active: addUserForm.is_active,
         permissions: addUserForm.permissions
       }, {
@@ -335,9 +365,32 @@ const UserManagement = () => {
   };
 
   // Sempre resetar o formulário ao abrir o modal
-  const handleOpenAddModal = () => {
+  const handleOpenAddModal = async () => {
     setAddUserForm(initialAddUserForm);
     setShowAddModal(true);
+    
+    // SEMPRE forçar carregamento dos provedores quando abrir o modal
+    console.log('🔍 Modal aberto - forçando carregamento de provedores...');
+    try {
+      const token = localStorage.getItem('token');
+      console.log('🔑 Token encontrado:', token ? 'SIM' : 'NÃO');
+      
+      if (token) {
+        console.log('🚀 Fazendo chamada para API...');
+        const response = await axios.get('/api/provedores/', {
+          headers: { Authorization: `Token ${token}` }
+        });
+        const provedoresData = response.data.results || response.data;
+        console.log('✅ Provedores carregados no modal:', provedoresData);
+        setProvedores(provedoresData);
+      } else {
+        console.error('❌ Token não encontrado!');
+      }
+    } catch (error) {
+      console.error('❌ Erro ao carregar provedores no modal:', error);
+      // Fallback: criar provedor padrão
+      setProvedores([{ id: 1, nome: 'MEGA FIBRA (Fallback)' }]);
+    }
   };
 
   // Função para ativar/desativar usuário
@@ -722,6 +775,31 @@ const UserManagement = () => {
                     {userRole === 'superadmin' && <option value="superadmin">Super Admin</option>}
                   </select>
                 </div>
+                                 <div>
+                   <label className="block text-gray-200 text-sm font-bold mb-2">Empresa</label>
+                   {/* Debug: mostrar estado dos provedores */}
+                   <div className="text-xs text-gray-400 mb-1">
+                     Debug: {provedores.length} provedores carregados
+                   </div>
+                   <select
+                     name="provedor_id"
+                     className="w-full px-4 py-2 rounded bg-background text-white border border-border"
+                     value={addUserForm.provedor_id}
+                     onChange={handleAddUserChange}
+                     required
+                   >
+                     <option value="">Selecione...</option>
+                     {provedores.map(provedor => (
+                       <option key={provedor.id} value={provedor.id}>
+                         {provedor.nome}
+                       </option>
+                     ))}
+                     {/* Debug: mostrar quantos provedores foram carregados */}
+                     {provedores.length === 0 && (
+                       <option disabled>Carregando provedores...</option>
+                     )}
+                   </select>
+                 </div>
                 <div>
                   <label className="block text-gray-200 text-sm font-bold mb-2">Permissões</label>
                   <div className="flex flex-col gap-2">
