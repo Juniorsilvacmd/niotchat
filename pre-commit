@@ -1,0 +1,30 @@
+#!/bin/sh
+#
+# Pre-commit hook para atualizar automaticamente a versão
+# Este hook é executado antes de cada commit
+
+echo "🔄 Pre-commit hook: Verificando versão..."
+
+# Verificar se o arquivo VERSION foi modificado
+if git diff --cached --name-only | grep -q "VERSION"; then
+    echo "✅ Arquivo VERSION modificado - versão será atualizada automaticamente"
+    
+    # Executar o gerenciador de versões para atualizar todos os arquivos
+    python version_manager.py patch
+    
+    # Adicionar os arquivos atualizados ao commit
+    git add VERSION
+    git add frontend/frontend/package.json
+    git add frontend/frontend/package-lock.json
+    git add frontend/frontend/pnpm-lock.yaml
+    git add backend/niochat/settings.py
+    git add backend/core/telegram_service.py
+    git add VERSION_INFO.md
+    
+    echo "✅ Arquivos de versão atualizados e adicionados ao commit"
+else
+    echo "ℹ️  Arquivo VERSION não modificado - versão mantida"
+fi
+
+echo "✅ Pre-commit hook concluído"
+exit 0
