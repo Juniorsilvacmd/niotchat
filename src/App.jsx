@@ -1,0 +1,1 @@
+import Contacts from './components/Contacts2'; 

@@ -1,0 +1,329 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+:root {
+  --radius: 0.5rem;
+  /* Light Theme Colors */
+  --background: #ffffff;
+  --foreground: #1a1a1a;
+  --card: #f8f9fa;
+  --card-foreground: #1a1a1a;
+  --popover: #ffffff;
+  --popover-foreground: #1a1a1a;
+  --primary: #3b82f6;
+  --primary-foreground: #ffffff;
+  --secondary: #f1f5f9;
+  --secondary-foreground: #1a1a1a;
+  --muted: #f1f5f9;
+  --muted-foreground: #64748b;
+  --accent: #3b82f6;
+  --accent-foreground: #ffffff;
+  --destructive: #ef4444;
+  --border: #e2e8f0;
+  --input: #ffffff;
+  --ring: #3b82f6;
+  --chart-1: #3b82f6;
+  --chart-2: #10b981;
+  --chart-3: #f59e0b;
+  --chart-4: #ef4444;
+  --chart-5: #8b5cf6;
+  --sidebar: #f8f9fa;
+  --sidebar-foreground: #1a1a1a;
+  --sidebar-primary: #3b82f6;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #e2e8f0;
+  --sidebar-accent-foreground: #1a1a1a;
+  --sidebar-border: #e2e8f0;
+  --sidebar-ring: #3b82f6;
+  
+  /* Custom NioChat Colors */
+  --niochat-primary: #3b82f6;
+  --niochat-secondary: #f8f9fa;
+  --niochat-accent: #10b981;
+  --niochat-warning: #f59e0b;
+  --niochat-danger: #ef4444;
+  --niochat-success: #10b981;
+  --niochat-info: #06b6d4;
+  
+  /* Label Colors */
+  --label-yellow: #fbbf24;
+  --label-blue: #3b82f6;
+  --label-red: #ef4444;
+  --label-green: #10b981;
+  --label-purple: #8b5cf6;
+  --label-orange: #f97316;
+}
+
+.dark {
+  --background: #1a1f2e;
+  --foreground: #e2e8f0;
+  --card: #252b3d;
+  --card-foreground: #e2e8f0;
+  --popover: #252b3d;
+  --popover-foreground: #e2e8f0;
+  --primary: #3b82f6;
+  --primary-foreground: #ffffff;
+  --secondary: #374151;
+  --secondary-foreground: #e2e8f0;
+  --muted: #374151;
+  --muted-foreground: #9ca3af;
+  --accent: #3b82f6;
+  --accent-foreground: #ffffff;
+  --destructive: #ef4444;
+  --border: #374151;
+  --input: #374151;
+  --ring: #3b82f6;
+  --chart-1: #3b82f6;
+  --chart-2: #10b981;
+  --chart-3: #f59e0b;
+  --chart-4: #ef4444;
+  --chart-5: #8b5cf6;
+  --sidebar: #1e293b;
+  --sidebar-foreground: #e2e8f0;
+  --sidebar-primary: #3b82f6;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #374151;
+  --sidebar-accent-foreground: #e2e8f0;
+  --sidebar-border: #374151;
+  --sidebar-ring: #3b82f6;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground font-sans;
+  }
+  
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+  
+  ::-webkit-scrollbar-track {
+    background: var(--muted);
+  }
+  
+  ::-webkit-scrollbar-thumb {
+    background: var(--muted-foreground);
+    border-radius: 3px;
+  }
+  
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--primary);
+  }
+}
+
+@layer components {
+  .niochat-sidebar {
+    @apply bg-sidebar border-r border-sidebar-border;
+  }
+  
+  .niochat-main {
+    @apply bg-background;
+  }
+  
+  .niochat-card {
+    @apply bg-card border border-border rounded-lg shadow-sm;
+  }
+  
+  .niochat-button {
+    @apply inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50;
+  }
+  
+  .niochat-button-primary {
+    @apply bg-primary text-primary-foreground hover:bg-primary/90;
+  }
+  
+  .niochat-button-secondary {
+    @apply bg-secondary text-secondary-foreground hover:bg-secondary/80;
+  }
+  
+  .niochat-input {
+    @apply flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  
+  .label-badge {
+    @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
+  }
+  
+  .label-yellow {
+    @apply bg-yellow-500/20 text-yellow-300 border border-yellow-500/30;
+  }
+  
+  .label-blue {
+    @apply bg-blue-500/20 text-blue-300 border border-blue-500/30;
+  }
+  
+  .label-red {
+    @apply bg-red-500/20 text-red-300 border border-red-500/30;
+  }
+  
+  .label-green {
+    @apply bg-green-500/20 text-green-300 border border-green-500/30;
+  }
+  
+  .label-purple {
+    @apply bg-purple-500/20 text-purple-300 border border-purple-500/30;
+  }
+  
+  .label-orange {
+    @apply bg-orange-500/20 text-orange-300 border border-orange-500/30;
+  }
+}
+
+.main-content, .flex-1, .content, .dashboard-content {
+  border-top: none !important;
+  margin-top: 0 !important;
+  padding-top: 0 !important;
+}
+
+/* Barra de rolagem sempre visível e personalizada */
+.scrollbar-always-visible {
+  scrollbar-width: auto; /* Firefox */
+  scrollbar-color: #888 #222; /* Firefox */
+}
+
+/* Chrome, Edge, Safari */
+.scrollbar-always-visible::-webkit-scrollbar {
+  width: 8px;
+  background: #222;
+}
+
+.scrollbar-always-visible::-webkit-scrollbar-thumb {
+  background: #888;
+  border-radius: 4px;
+}
+
+.scrollbar-always-visible::-webkit-scrollbar-track {
+  background: #222;
+}
+
+/* QR Code Styles */
+.qr-code-image {
+  image-rendering: crisp-edges !important;
+  background-color: white !important;
+}
+
+.qr-code-container {
+  background-color: white !important;
+  padding: 0.75rem !important;
+  border-radius: 0.5rem !important;
+  border: 1px solid #d1d5db !important;
+  display: inline-block !important;
+}
+
+/* Message Bubbles - Flexible Width */
+.message-bubble {
+  display: inline-block;
+  max-width: 70%;
+  width: auto;
+  word-wrap: break-word;
+  word-break: break-word;
+}
+
+.message-bubble-content {
+  display: inline-block;
+  width: auto;
+  min-width: min-content;
+  max-width: 100%;
+  word-wrap: break-word;
+  word-break: break-word;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  hyphens: auto;
+}
+
+/* Garantir que o texto dentro das mensagens seja quebrado corretamente */
+.message-bubble-content span {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  hyphens: auto;
+  display: inline-block;
+  width: 100%;
+}
+
+@media (max-width: 768px) {
+  .w-64 {
+    width: 0 !important;
+    min-width: 0 !important;
+  }
+  .h-screen, .min-h-screen {
+    height: 100vh !important;
+  }
+  .flex-1, .content, .dashboard-content {
+    width: 100vw !important;
+    min-width: 0 !important;
+    max-width: 100vw !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+  .text-xl {
+    font-size: 1.1rem !important;
+  }
+  .text-2xl, .text-3xl, .text-4xl {
+    font-size: 1.2rem !important;
+  }
+  .p-4, .px-4, .py-4, .px-6, .py-6 {
+    padding: 0.5rem !important;
+  }
+  .gap-3, .gap-4 {
+    gap: 0.5rem !important;
+  }
+  .rounded-lg {
+    border-radius: 0.5rem !important;
+  }
+  .overflow-hidden {
+    overflow-x: hidden !important;
+  }
+  .border-r {
+    border-right: none !important;
+  }
+  .sidebar-fixed {
+    display: none !important;
+  }
+}
+

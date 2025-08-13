@@ -1,0 +1,17 @@
+[Unit]
+Description=NioChat Frontend (Vite)
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/niochat/frontend/frontend
+Environment=PATH=/usr/bin:/usr/local/bin
+ExecStart=/usr/bin/npm run preview -- --host 0.0.0.0 --port 8012
+ExecReload=/bin/kill -s HUP $MAINPID
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target 

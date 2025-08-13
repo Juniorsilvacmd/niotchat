@@ -1,0 +1,195 @@
+{% extends "admin/base_site.html" %}
+{% load i18n static %}
+
+{% block extrastyle %}
+<style>
+    .usuarios-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 20px;
+        background: white;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    
+    .usuarios-table th,
+    .usuarios-table td {
+        padding: 12px;
+        text-align: left;
+        border-bottom: 1px solid #ddd;
+    }
+    
+    .usuarios-table th {
+        background-color: #f8f9fa;
+        font-weight: bold;
+        color: #333;
+    }
+    
+    .usuarios-table tr:hover {
+        background-color: #f5f5f5;
+    }
+    
+    .status-online {
+        color: #28a745;
+        font-weight: bold;
+    }
+    
+    .status-offline {
+        color: #6c757d;
+    }
+    
+    .status-ativo {
+        color: #28a745;
+        font-weight: bold;
+    }
+    
+    .status-inativo {
+        color: #dc3545;
+    }
+    
+    .empresa-badge {
+        display: inline-block;
+        padding: 4px 8px;
+        margin: 2px;
+        background-color: #007bff;
+        color: white;
+        border-radius: 12px;
+        font-size: 12px;
+    }
+    
+    .empresa-inativa {
+        background-color: #6c757d;
+    }
+    
+    .page-header {
+        margin-bottom: 30px;
+        padding-bottom: 10px;
+        border-bottom: 2px solid #007bff;
+    }
+    
+    .page-title {
+        color: #333;
+        font-size: 24px;
+        margin: 0;
+    }
+    
+    .stats-summary {
+        display: flex;
+        gap: 20px;
+        margin-bottom: 20px;
+        flex-wrap: wrap;
+    }
+    
+    .stat-card {
+        background: white;
+        padding: 15px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        min-width: 150px;
+    }
+    
+    .stat-number {
+        font-size: 24px;
+        font-weight: bold;
+        color: #007bff;
+    }
+    
+    .stat-label {
+        color: #666;
+        font-size: 14px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">👥 Usuários do Sistema</h1>
+    <p>Visualize todos os usuários do sistema com informações detalhadas</p>
+</div>
+
+<div class="stats-summary">
+    <div class="stat-card">
+        <div class="stat-number">{{ users_with_companies|length }}</div>
+        <div class="stat-label">Total de Usuários</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-number">{{ users_with_companies|dictsort:"is_online"|length }}</div>
+        <div class="stat-label">Usuários Online</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-number">{{ users_with_companies|dictsort:"status"|length }}</div>
+        <div class="stat-label">Usuários Ativos</div>
+    </div>
+</div>
+
+<div class="module">
+    <table class="usuarios-table">
+        <thead>
+            <tr>
+                <th>👤 Usuário</th>
+                <th>📧 Email</th>
+                <th>🏢 Empresas/Provedores</th>
+                <th>👑 Tipo</th>
+                <th>🟢 Status</th>
+                <th>🌐 Online</th>
+                <th>⏰ Último Acesso</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for user_info in users_with_companies %}
+            <tr>
+                <td>
+                    <strong>{{ user_info.user.username }}</strong><br>
+                    <small>{{ user_info.user.first_name }} {{ user_info.user.last_name }}</small>
+                </td>
+                <td>{{ user_info.user.email|default:"-" }}</td>
+                <td>
+                    {% if user_info.companies %}
+                        {% for company in user_info.companies %}
+                            <span class="empresa-badge {% if not company.is_active %}empresa-inativa{% endif %}">
+                                {{ company.name }} ({{ company.role }})
+                                <small style="font-size: 10px; opacity: 0.8;">{{ company.type }}</small>
+                            </span>
+                        {% endfor %}
+                    {% else %}
+                        <span style="color: #999;">Sem empresa/provedor</span>
+                    {% endif %}
+                </td>
+                <td>{{ user_info.user.get_user_type_display }}</td>
+                <td>
+                    <span class="{% if user_info.status == 'Ativo' %}status-ativo{% else %}status-inativo{% endif %}">
+                        {{ user_info.status }}
+                    </span>
+                </td>
+                <td>
+                    <span class="{% if user_info.is_online %}status-online{% else %}status-offline{% endif %}">
+                        {% if user_info.is_online %}
+                            🟢 Online
+                        {% else %}
+                            ⚫ Offline
+                        {% endif %}
+                    </span>
+                </td>
+                <td>{{ user_info.last_access }}</td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="7" style="text-align: center; padding: 40px; color: #666;">
+                    Nenhum usuário encontrado no sistema.
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div style="margin-top: 30px; padding: 15px; background: #f8f9fa; border-radius: 8px;">
+    <h4>📊 Legenda:</h4>
+    <ul style="margin: 0; padding-left: 20px;">
+        <li><strong>🟢 Online:</strong> Usuário ativo nos últimos 5 minutos</li>
+        <li><strong>⚫ Offline:</strong> Usuário inativo há mais de 5 minutos</li>
+        <li><strong>Ativo:</strong> Conta de usuário habilitada</li>
+        <li><strong>Inativo:</strong> Conta de usuário desabilitada</li>
+        <li><strong>Empresas/Provedores:</strong> Empresas e provedores associados ao usuário e suas funções</li>
+    </ul>
+</div>
+{% endblock %} 
