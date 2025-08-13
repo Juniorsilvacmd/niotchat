@@ -8,6 +8,9 @@ echo "🚀 Instalação inicial do NioChat na VPS (sem Docker)..."
 # Configurações
 PROJECT_DIR="/var/www/niochat"
 GITHUB_REPO="https://github.com/Juniorsilvacmd/niochat.git"
+DOMAIN_APP="app.niochat.com.br"
+DOMAIN_API="api.niochat.com.br"
+DOMAIN_ADMIN="admin.niochat.com.br"
 
 # Cores para output
 RED='\033[0;31m'
@@ -42,7 +45,7 @@ log "Atualizando sistema..."
 apt update && apt upgrade -y
 
 log "Instalando dependências básicas..."
-apt install -y git curl wget nginx python3 python3-pip python3-venv nodejs npm redis-server postgresql postgresql-contrib certbot python3-certbot-nginx ufw
+apt install -y git curl wget nginx python3 python3-pip python3-venv nodejs npm redis-server postgresql postgresql-contrib certbot python3-certbot-nginx ufw ffmpeg
 
 # Instalar Node.js 18+ se necessário
 if ! command -v node &> /dev/null || [[ $(node -v | cut -d'v' -f2 | cut -d'.' -f1) -lt 18 ]]; then
@@ -50,6 +53,10 @@ if ! command -v node &> /dev/null || [[ $(node -v | cut -d'v' -f2 | cut -d'.' -f
     curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
     apt install -y nodejs
 fi
+
+# Instalar pnpm globalmente
+log "Instalando pnpm..."
+npm install -g pnpm
 
 # Configurar PostgreSQL
 log "Configurando PostgreSQL..."
@@ -98,39 +105,35 @@ log "Instalando dependências do backend..."
 cd backend
 sudo -u www-data ../venv/bin/pip install -r requirements.txt
 
-# Executar migrações
-log "Executando migrações..."
+# Executar migrações iniciais
+log "Executando migrações iniciais..."
 sudo -u www-data ../venv/bin/python manage.py migrate --noinput
+
+# Criar superusuário
+log "Criando superusuário..."
+echo "from core.models import User; User.objects.create_superuser('admin', 'admin@niochat.com.br', 'admin123') if not User.objects.filter(username='admin').exists() else None" | sudo -u www-data ../venv/bin/python manage.py shell
 
 # Coletar arquivos estáticos
 log "Coletando arquivos estáticos..."
 sudo -u www-data ../venv/bin/python manage.py collectstatic --noinput
 
-cd ..
+cd $PROJECT_DIR
 
 # Instalar dependências do frontend
 log "Instalando dependências do frontend..."
 cd frontend/frontend
-sudo -u www-data npm install
-sudo -u www-data npm run build
-cd ../..
+sudo -u www-data pnpm install
 
-# Configurar Nginx
-log "Configurando Nginx..."
-cp nginx/sites/*.conf /etc/nginx/sites-available/
+# Build do frontend
+log "Fazendo build do frontend..."
+sudo -u www-data pnpm run build
 
-# Habilitar sites
-ln -sf /etc/nginx/sites-available/app.niochat.com.br.conf /etc/nginx/sites-enabled/
-ln -sf /etc/nginx/sites-available/api.niochat.com.br.conf /etc/nginx/sites-enabled/
-ln -sf /etc/nginx/sites-available/admin.niochat.com.br.conf /etc/nginx/sites-enabled/
+cd $PROJECT_DIR
 
-# Remover site padrão
-rm -f /etc/nginx/sites-enabled/default
-
-# Configurar systemd services
+# Configurar serviços systemd
 log "Configurando serviços systemd..."
 
-# Serviço do Backend (Daphne)
+# Serviço do backend
 cat > /etc/systemd/system/niochat-backend.service << EOF
 [Unit]
 Description=NioChat Backend (Daphne)
@@ -142,15 +145,15 @@ User=www-data
 Group=www-data
 WorkingDirectory=$PROJECT_DIR/backend
 Environment=PATH=$PROJECT_DIR/venv/bin
-ExecStart=$PROJECT_DIR/venv/bin/daphne -b 0.0.0.0 -p 8010 niochat.asgi:application
+ExecStart=$PROJECT_DIR/venv/bin/daphne -b 0.0.0.0 -p 8010 -w 2 niochat.asgi:application
 Restart=always
-RestartSec=5
+RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# Serviço do Celery Worker
+# Serviço do Celery
 cat > /etc/systemd/system/niochat-celery.service << EOF
 [Unit]
 Description=NioChat Celery Worker
@@ -162,16 +165,16 @@ User=www-data
 Group=www-data
 WorkingDirectory=$PROJECT_DIR/backend
 Environment=PATH=$PROJECT_DIR/venv/bin
-ExecStart=$PROJECT_DIR/venv/bin/celery -A niochat worker -l info
+ExecStart=$PROJECT_DIR/venv/bin/celery -A niochat worker -l info --concurrency=2
 Restart=always
-RestartSec=5
+RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
 # Serviço do Celery Beat
-cat > /etc/systemd/system/niochat-celery-beat.service << EOF
+cat > /etc/systemd/system/niochat-celerybeat.service << EOF
 [Unit]
 Description=NioChat Celery Beat
 After=network.target postgresql.service redis-server.service
@@ -184,26 +187,7 @@ WorkingDirectory=$PROJECT_DIR/backend
 Environment=PATH=$PROJECT_DIR/venv/bin
 ExecStart=$PROJECT_DIR/venv/bin/celery -A niochat beat -l info
 Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# Serviço do Webhook
-cat > /etc/systemd/system/niochat-webhook.service << EOF
-[Unit]
-Description=NioChat Deploy Webhook
-After=network.target
-
-[Service]
-Type=simple
-User=www-data
-Group=www-data
-WorkingDirectory=$PROJECT_DIR
-ExecStart=$PROJECT_DIR/venv/bin/python webhook/deploy_webhook.py
-Restart=always
-RestartSec=5
+RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
@@ -213,109 +197,125 @@ EOF
 systemctl daemon-reload
 
 # Habilitar e iniciar serviços
-systemctl enable niochat-backend
-systemctl enable niochat-celery
-systemctl enable niochat-celery-beat
-systemctl enable niochat-webhook
-systemctl enable nginx
-systemctl enable postgresql
-systemctl enable redis-server
+log "Iniciando serviços..."
+systemctl enable niochat-backend niochat-celery niochat-celerybeat
+systemctl start niochat-backend niochat-celery niochat-celerybeat
 
-# Iniciar serviços
-systemctl start postgresql
-systemctl start redis-server
-systemctl start niochat-backend
-systemctl start niochat-celery
-systemctl start niochat-celery-beat
-systemctl start niochat-webhook
-systemctl start nginx
+# Configurar Nginx
+log "Configurando Nginx..."
+
+cat > /etc/nginx/sites-available/niochat << EOF
+# Configuração do NioChat
+server {
+    listen 80;
+    server_name $DOMAIN_APP $DOMAIN_API $DOMAIN_ADMIN 194.238.25.164;
+
+    # Frontend (app)
+    location / {
+        root $PROJECT_DIR/frontend/frontend/dist;
+        try_files \$uri \$uri/ /index.html;
+        
+        # Headers de segurança
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-XSS-Protection "1; mode=block" always;
+    }
+
+    # API Backend
+    location /api/ {
+        proxy_pass http://127.0.0.1:8010;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    # Admin Django
+    location /admin/ {
+        proxy_pass http://127.0.0.1:8010;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    # WebSocket
+    location /ws/ {
+        proxy_pass http://127.0.0.1:8010;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    # Media files
+    location /media/ {
+        alias $PROJECT_DIR/backend/media/;
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+    }
+
+    # Static files
+    location /static/ {
+        alias $PROJECT_DIR/backend/static/;
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+    }
+}
+EOF
+
+# Habilitar site
+ln -sf /etc/nginx/sites-available/niochat /etc/nginx/sites-enabled/
+rm -f /etc/nginx/sites-enabled/default
+
+# Testar configuração do Nginx
+nginx -t
+
+# Recarregar Nginx
+systemctl reload nginx
 
 # Configurar firewall
 log "Configurando firewall..."
 ufw allow 22/tcp
 ufw allow 80/tcp
 ufw allow 443/tcp
-ufw allow 8080/tcp  # Webhook
 ufw --force enable
 
 # Configurar SSL com Let's Encrypt
 log "Configurando SSL..."
-domains=("app.niochat.com.br" "api.niochat.com.br" "admin.niochat.com.br")
+certbot --nginx -d $DOMAIN_APP -d $DOMAIN_API -d $DOMAIN_ADMIN --non-interactive --agree-tos --email admin@niochat.com.br
 
-for domain in "${domains[@]}"; do
-    if nslookup $domain | grep -q "194.238.25.164"; then
-        log "✅ Domínio $domain configurado"
-        certbot --nginx -d $domain --non-interactive --agree-tos --email admin@niochat.com.br
-    else
-        warning "⚠️ Domínio $domain não está apontando para 194.238.25.164"
-    fi
-done
-
-# Configurar cron para renovar SSL
+# Configurar renovação automática do SSL
 echo "0 12 * * * /usr/bin/certbot renew --quiet" | crontab -
 
-# Configurar cron para verificar atualizações
-log "Configurando cron para verificar atualizações..."
-echo "*/5 * * * * cd $PROJECT_DIR && git fetch origin && git diff --quiet origin/main HEAD || systemctl start niochat-deploy" | crontab -
+# Configurar permissões
+log "Configurando permissões..."
+chown -R www-data:www-data $PROJECT_DIR
+chmod -R 755 $PROJECT_DIR
 
-# Dar permissões aos scripts
+# Criar script de deploy
+log "Criando script de deploy..."
 chmod +x deploy_vps_native.sh
-chmod +x deploy_automated.sh
 
-# Configurar serviço para deploy automático
-cat > /etc/systemd/system/niochat-deploy.service << EOF
-[Unit]
-Description=NioChat Deploy Service
-After=network.target
-
-[Service]
-Type=oneshot
-User=root
-WorkingDirectory=$PROJECT_DIR
-ExecStart=/bin/bash deploy_vps_native.sh
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-systemctl daemon-reload
-
-# Criar superusuário se não existir
-log "Criando superusuário..."
-cd backend
-if ! sudo -u www-data ../venv/bin/python manage.py shell -c "from django.contrib.auth import get_user_model; User = get_user_model(); User.objects.filter(is_superuser=True).exists()" 2>/dev/null | grep -q "True"; then
-    echo "from django.contrib.auth import get_user_model; User = get_user_model(); User.objects.create_superuser('admin', 'admin@niochat.com.br', 'admin123') if not User.objects.filter(is_superuser=True).exists() else None" | sudo -u www-data ../venv/bin/python manage.py shell
-    log "✅ Superusuário criado: admin / admin123"
-else
-    log "✅ Superusuário já existe"
-fi
-cd ..
-
-log "🎉 Instalação concluída!"
+log "✅ Instalação concluída com sucesso!"
+log "🌐 URLs configuradas:"
+log "   - App: https://$DOMAIN_APP"
+log "   - API: https://$DOMAIN_API"
+log "   - Admin: https://$DOMAIN_ADMIN"
 log ""
-log "🌐 URLs:"
-log "   - Frontend: https://app.niochat.com.br"
-log "   - API: https://api.niochat.com.br"
-log "   - Admin: https://admin.niochat.com.br"
-log "   - Webhook: http://194.238.25.164:8080"
+log "🔑 Credenciais de acesso:"
+log "   - Usuário: admin"
+log "   - Senha: admin123"
+log "   - URL: https://$DOMAIN_ADMIN/admin/"
 log ""
-log "🔧 Comandos úteis:"
-log "   - Status: systemctl status niochat-*"
-log "   - Logs: journalctl -u niochat-backend -f"
-log "   - Deploy manual: bash deploy_vps_native.sh"
-log "   - Reiniciar: systemctl restart niochat-backend"
+log "📋 Próximos passos:"
+log "   1. Acesse o admin e altere a senha do usuário admin"
+log "   2. Configure as variáveis de ambiente no arquivo .env"
+log "   3. Configure o GitHub Actions com os secrets:"
+log "      - VPS_HOST: 194.238.25.164"
+log "      - VPS_SSH_KEY: sua-chave-ssh-privada"
 log ""
-log "📝 Próximos passos:"
-log "   1. Configure o webhook no GitHub"
-log "   2. Teste o sistema"
-log "   3. Configure monitoramento"
-log ""
-log "🔗 Webhook GitHub:"
-log "   URL: http://194.238.25.164:8080"
-log "   Secret: niochat_deploy_secret_2024"
-log ""
-log "📊 Monitoramento:"
-log "   - Logs: journalctl -u niochat-* -f"
-log "   - Status: systemctl list-units --type=service --state=running | grep niochat"
+log "🚀 Para fazer deploy automático, faça push para a branch main!"

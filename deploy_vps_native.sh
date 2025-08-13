@@ -10,6 +10,7 @@ PROJECT_DIR="/var/www/niochat"
 VENV_DIR="/var/www/niochat/venv"
 BACKEND_DIR="/var/www/niochat/backend"
 FRONTEND_DIR="/var/www/niochat/frontend/frontend"
+BACKUP_DIR="/var/www/niochat/backups"
 
 # Cores para output
 RED='\033[0;31m'
@@ -41,6 +42,27 @@ if [ ! -d "$PROJECT_DIR" ]; then
 fi
 
 cd "$PROJECT_DIR"
+
+# Criar diretório de backup se não existir
+mkdir -p "$BACKUP_DIR"
+
+# Fazer backup do banco de dados
+log "Fazendo backup do banco de dados..."
+if command -v pg_dump &> /dev/null; then
+    BACKUP_FILE="backup_$(date +%Y%m%d_%H%M%S).sql"
+    pg_dump -U niochat_user -h localhost niochat > "$BACKUP_DIR/$BACKUP_FILE"
+    log "✅ Backup criado: $BACKUP_FILE"
+else
+    warning "⚠️ pg_dump não encontrado, pulando backup"
+fi
+
+# Fazer backup dos arquivos de mídia
+log "Fazendo backup dos arquivos de mídia..."
+if [ -d "backend/media" ]; then
+    MEDIA_BACKUP="media_backup_$(date +%Y%m%d_%H%M%S).tar.gz"
+    tar -czf "$BACKUP_DIR/$MEDIA_BACKUP" -C backend media/
+    log "✅ Backup de mídia criado: $MEDIA_BACKUP"
+fi
 
 # Verificar se o ambiente virtual existe
 if [ ! -d "$VENV_DIR" ]; then
@@ -80,14 +102,11 @@ npm run build
 
 cd "$PROJECT_DIR"
 
-# Fazer backup do banco de dados
-log "Fazendo backup do banco de dados..."
-if command -v pg_dump &> /dev/null; then
-    pg_dump -U niochat_user -h localhost niochat > backup_$(date +%Y%m%d_%H%M%S).sql
-    log "✅ Backup criado com sucesso"
-else
-    warning "⚠️ pg_dump não encontrado, pulando backup"
-fi
+# Limpar backups antigos (manter apenas os últimos 10)
+log "Limpando backups antigos..."
+cd "$BACKUP_DIR"
+ls -t | tail -n +11 | xargs -r rm -f
+cd "$PROJECT_DIR"
 
 # Reiniciar serviços
 log "Reiniciando serviços..."
@@ -97,107 +116,101 @@ if systemctl is-active --quiet niochat-backend; then
     systemctl restart niochat-backend
     log "✅ Backend reiniciado"
 else
-    warning "Serviço backend não encontrado, iniciando..."
+    warning "⚠️ Serviço backend não encontrado, iniciando..."
     systemctl start niochat-backend
 fi
 
-# Reiniciar Celery worker
+# Reiniciar Celery
 if systemctl is-active --quiet niochat-celery; then
     systemctl restart niochat-celery
-    log "✅ Celery worker reiniciado"
+    log "✅ Celery reiniciado"
 else
-    warning "Serviço Celery não encontrado"
+    warning "⚠️ Serviço Celery não encontrado, iniciando..."
+    systemctl start niochat-celery
 fi
 
-# Reiniciar Celery beat
-if systemctl is-active --quiet niochat-celery-beat; then
-    systemctl restart niochat-celery-beat
-    log "✅ Celery beat reiniciado"
+# Reiniciar Celery Beat
+if systemctl is-active --quiet niochat-celerybeat; then
+    systemctl restart niochat-celerybeat
+    log "✅ Celery Beat reiniciado"
 else
-    warning "Serviço Celery beat não encontrado"
+    warning "⚠️ Serviço Celery Beat não encontrado, iniciando..."
+    systemctl start niochat-celerybeat
 fi
-
-# Reiniciar Nginx
-systemctl reload nginx
-log "✅ Nginx recarregado"
-
-# Aguardar serviços iniciarem
-log "Aguardando serviços iniciarem..."
-sleep 10
 
 # Verificar status dos serviços
 log "Verificando status dos serviços..."
-services=("niochat-backend" "nginx" "redis-server" "postgresql")
+sleep 5
 
-for service in "${services[@]}"; do
+# Verificar se os serviços estão rodando
+SERVICES=("niochat-backend" "niochat-celery" "niochat-celerybeat")
+ALL_RUNNING=true
+
+for service in "${SERVICES[@]}"; do
     if systemctl is-active --quiet "$service"; then
         log "✅ $service está rodando"
     else
         error "❌ $service não está rodando"
-        log "Logs do $service:"
-        journalctl -u "$service" --no-pager -n 10
+        ALL_RUNNING=false
     fi
 done
 
 # Verificar conectividade
-log "Verificando conectividade..."
-if curl -s http://localhost:80 > /dev/null; then
-    log "✅ Nginx respondendo na porta 80"
-else
-    error "❌ Nginx não está respondendo na porta 80"
-fi
-
-if curl -s http://localhost:8010 > /dev/null; then
+log "Testando conectividade..."
+if curl -s http://localhost:8010/admin/ > /dev/null; then
     log "✅ Backend respondendo na porta 8010"
 else
     error "❌ Backend não está respondendo na porta 8010"
+    ALL_RUNNING=false
 fi
 
-# Verificar domínios
-log "Verificando domínios..."
-domains=("app.niochat.com.br" "api.niochat.com.br" "admin.niochat.com.br")
-
-for domain in "${domains[@]}"; do
-    if nslookup $domain | grep -q "194.238.25.164"; then
-        log "✅ Domínio $domain configurado"
-    else
-        warning "⚠️ Domínio $domain não está apontando para 194.238.25.164"
-    fi
-done
-
-# Configurar SSL se necessário
-log "Verificando certificados SSL..."
-for domain in "${domains[@]}"; do
-    if [ ! -d "/etc/letsencrypt/live/$domain" ]; then
-        warning "⚠️ Certificado SSL não encontrado para $domain"
-        info "Execute: certbot --nginx -d $domain"
-    else
-        log "✅ Certificado SSL encontrado para $domain"
-    fi
-done
-
-# Verificar logs de erro
-log "Verificando logs de erro..."
-if journalctl -u niochat-backend --since "5 minutes ago" | grep -i error; then
-    warning "⚠️ Encontrados erros nos logs do backend"
+# Verificar Nginx
+if systemctl is-active --quiet nginx; then
+    log "✅ Nginx está rodando"
 else
-    log "✅ Nenhum erro encontrado nos logs do backend"
+    error "❌ Nginx não está rodando"
+    ALL_RUNNING=false
 fi
 
-log "🎉 Deploy concluído!"
-log ""
-log "🌐 URLs:"
-log "   - Frontend: https://app.niochat.com.br"
-log "   - API: https://api.niochat.com.br"
-log "   - Admin: https://admin.niochat.com.br"
-log ""
-log "🔧 Comandos úteis:"
-log "   - Status: systemctl status niochat-*"
-log "   - Logs: journalctl -u niochat-backend -f"
-log "   - Reiniciar: systemctl restart niochat-backend"
-log "   - Parar: systemctl stop niochat-backend"
-log "   - Iniciar: systemctl start niochat-backend"
-log ""
-log "📊 Monitoramento:"
-log "   - Logs do sistema: journalctl -u niochat-* -f"
-log "   - Status dos serviços: systemctl list-units --type=service --state=running | grep niochat"
+# Verificar banco de dados
+if sudo -u postgres psql -d niochat -c "SELECT 1;" > /dev/null 2>&1; then
+    log "✅ Banco de dados PostgreSQL acessível"
+else
+    error "❌ Banco de dados PostgreSQL não está acessível"
+    ALL_RUNNING=false
+fi
+
+# Verificar Redis
+if redis-cli ping > /dev/null 2>&1; then
+    log "✅ Redis está respondendo"
+else
+    error "❌ Redis não está respondendo"
+    ALL_RUNNING=false
+fi
+
+# Resultado final
+if [ "$ALL_RUNNING" = true ]; then
+    log "🎉 Deploy concluído com sucesso!"
+    log "🌐 URLs disponíveis:"
+    log "   - App: https://app.niochat.com.br"
+    log "   - API: https://api.niochat.com.br"
+    log "   - Admin: https://admin.niochat.com.br"
+    log ""
+    log "📊 Status dos serviços:"
+    systemctl list-units --type=service --state=running | grep niochat
+    log ""
+    log "📝 Logs recentes:"
+    journalctl -u niochat-backend --since "5 minutes ago" --no-pager | tail -10
+else
+    error "❌ Deploy concluído com problemas!"
+    error "Verifique os logs dos serviços:"
+    error "   - Backend: journalctl -u niochat-backend -f"
+    error "   - Celery: journalctl -u niochat-celery -f"
+    error "   - Nginx: journalctl -u nginx -f"
+    exit 1
+fi
+
+# Limpar variáveis de ambiente
+deactivate
+
+log "✅ Deploy finalizado!"
