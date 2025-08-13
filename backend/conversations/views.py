@@ -1477,15 +1477,19 @@ class TeamMemberViewSet(viewsets.ModelViewSet):
             return TeamMember.objects.none()
 
 
+<<<<<<< HEAD
 from django.http import FileResponse, Http404, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 
 @csrf_exempt
+=======
+>>>>>>> 8c56b62450b45f82237bce9672b2c4bcd20a31e4
 def serve_media_file(request, conversation_id, filename):
     """
     Serve media files for conversations
     """
+<<<<<<< HEAD
     print(f"🔍 DEBUG: serve_media_file chamado - conversation_id: {conversation_id}, filename: {filename}")
     print(f"🔍 DEBUG: Método HTTP: {request.method}")
     print(f"🔍 DEBUG: User: {request.user}")
@@ -1494,10 +1498,16 @@ def serve_media_file(request, conversation_id, filename):
         # Verificar se a conversa existe
         conversation = Conversation.objects.get(id=conversation_id)
         print(f"🔍 DEBUG: Conversa encontrada: {conversation.id}")
+=======
+    try:
+        # Verificar se a conversa existe
+        conversation = Conversation.objects.get(id=conversation_id)
+>>>>>>> 8c56b62450b45f82237bce9672b2c4bcd20a31e4
         
         # Construir caminho do arquivo
         media_dir = os.path.join(settings.MEDIA_ROOT, 'messages', str(conversation_id))
         file_path = os.path.join(media_dir, filename)
+<<<<<<< HEAD
         print(f"🔍 DEBUG: Caminho do arquivo: {file_path}")
         
         # Verificar se o arquivo existe
@@ -1510,6 +1520,15 @@ def serve_media_file(request, conversation_id, filename):
         # Verificar se o arquivo está dentro do diretório de mídia (segurança)
         if not file_path.startswith(settings.MEDIA_ROOT):
             print(f"❌ DEBUG: Acesso negado - arquivo fora do diretório de mídia")
+=======
+        
+        # Verificar se o arquivo existe
+        if not os.path.exists(file_path):
+            raise Http404("Arquivo não encontrado")
+        
+        # Verificar se o arquivo está dentro do diretório de mídia (segurança)
+        if not file_path.startswith(settings.MEDIA_ROOT):
+>>>>>>> 8c56b62450b45f82237bce9672b2c4bcd20a31e4
             raise Http404("Acesso negado")
         
         # Determinar o tipo MIME baseado na extensão
@@ -1518,6 +1537,7 @@ def serve_media_file(request, conversation_id, filename):
         if not content_type:
             content_type = 'application/octet-stream'
         
+<<<<<<< HEAD
         print(f"🔍 DEBUG: Content-Type: {content_type}")
         
         # Servir o arquivo
@@ -1531,6 +1551,17 @@ def serve_media_file(request, conversation_id, filename):
         raise Http404("Conversa não encontrada")
     except Exception as e:
         print(f"❌ DEBUG: Erro ao servir arquivo de mídia: {e}")
+=======
+        # Servir o arquivo
+        response = FileResponse(open(file_path, 'rb'), content_type=content_type)
+        response['Content-Disposition'] = f'inline; filename="{filename}"'
+        return response
+        
+    except Conversation.DoesNotExist:
+        raise Http404("Conversa não encontrada")
+    except Exception as e:
+        print(f"Erro ao servir arquivo de mídia: {e}")
+>>>>>>> 8c56b62450b45f82237bce9672b2c4bcd20a31e4
         raise Http404("Erro ao servir arquivo")
 
 

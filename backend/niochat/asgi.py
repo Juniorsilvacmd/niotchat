@@ -10,11 +10,16 @@ https://docs.djangoproject.com/en/5.2/howto/deployment/asgi/
 import os
 from django.core.asgi import get_asgi_application
 from channels.routing import ProtocolTypeRouter, URLRouter
+<<<<<<< HEAD
 from django.urls import re_path
+=======
+from channels.auth import AuthMiddlewareStack
+>>>>>>> 8c56b62450b45f82237bce9672b2c4bcd20a31e4
 from conversations.routing import websocket_urlpatterns
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'niochat.settings')
 
+<<<<<<< HEAD
 # Debug: imprimir as rotas de WebSocket
 print("WebSocket URL patterns:", websocket_urlpatterns)
 
@@ -53,3 +58,14 @@ print("Application:", test_application)
 
 application = test_application
 
+=======
+application = ProtocolTypeRouter({
+    "http": get_asgi_application(),
+    "websocket": AuthMiddlewareStack(
+        URLRouter(
+            websocket_urlpatterns
+        )
+    ),
+})
+
+>>>>>>> 8c56b62450b45f82237bce9672b2c4bcd20a31e4

@@ -23,7 +23,10 @@ import telegramIcon from '../assets/telegram.png';
 import gmailIcon from '../assets/gmail.png';
 import instagramIcon from '../assets/instagram.png';
 import CustomAudioPlayer from './ui/CustomAudioPlayer';
+<<<<<<< HEAD
 import EmojiPicker from './EmojiPicker';
+=======
+>>>>>>> 8c56b62450b45f82237bce9672b2c4bcd20a31e4
 
 const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) => {
   const navigate = useNavigate();
@@ -53,7 +56,10 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [messageToDelete, setMessageToDelete] = useState(null);
   const [replyingToMessage, setReplyingToMessage] = useState(null);
+<<<<<<< HEAD
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+=======
+>>>>>>> 8c56b62450b45f82237bce9672b2c4bcd20a31e4
   
   // Estados para gravação de áudio
   const [isRecording, setIsRecording] = useState(false);
@@ -1064,11 +1070,14 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
     }
   };
 
+<<<<<<< HEAD
   // Função para lidar com seleção de emoji
   const handleEmojiSelect = (emoji) => {
     setMessage(prev => prev + emoji);
   };
 
+=======
+>>>>>>> 8c56b62450b45f82237bce9672b2c4bcd20a31e4
   // Função para apagar mensagem
   const deleteMessage = async (messageId) => {
     try {
@@ -1371,9 +1380,14 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
             }
             const isCustomer = msg.is_from_customer;
             
+<<<<<<< HEAD
             // Verificar se é uma mensagem de mídia (usar message_type ou media_type)
             const isMediaMessage = (msg.message_type && ['image', 'video', 'audio', 'document'].includes(msg.message_type)) || 
                                  (msg.media_type && ['image', 'video', 'audio', 'ptt', 'myaudio', 'document'].includes(msg.media_type));
+=======
+            // Verificar se é uma mensagem de mídia (apenas se tiver media_type específico)
+            const isMediaMessage = msg.media_type && ['image', 'video', 'audio', 'ptt', 'myaudio', 'document'].includes(msg.media_type);
+>>>>>>> 8c56b62450b45f82237bce9672b2c4bcd20a31e4
             
             // Debug: Log das mensagens para verificar estrutura
             if (msg.media_type === 'ptt') {
@@ -1387,6 +1401,7 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
               });
             }
             
+<<<<<<< HEAD
             // Debug: Log específico para mensagens de imagem
             if (msg.message_type === 'image' || msg.media_type === 'image') {
               console.log(' 🖼️ MENSAGEM DE IMAGEM DETECTADA:', {
@@ -1401,6 +1416,8 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
               });
             }
             
+=======
+>>>>>>> 8c56b62450b45f82237bce9672b2c4bcd20a31e4
 
             
 
@@ -1457,6 +1474,7 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
                     : 'bg-[#009ca6] text-white' // Azul para TODAS as mensagens do sistema (IA ou atendente)
               }`}>
                 {/* Mostrar imagem se for uma mensagem de mídia com imagem */}
+<<<<<<< HEAD
                 {isMediaMessage && (msg.message_type === 'image' || msg.media_type === 'image') && (
                   <div className="mb-2">
                     {(() => {
@@ -1497,11 +1515,33 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
                         />
                       );
                     })()}
+=======
+                {isMediaMessage && msg.media_type === 'image' && (
+                  <div className="mb-2">
+                    <img 
+                      src={msg.additional_attributes?.file_url || msg.file_url || (msg.file ? URL.createObjectURL(msg.file) : null)} 
+                      alt={msg.additional_attributes?.file_name || msg.file_name || 'Imagem'}
+                      className="max-w-full h-auto rounded-lg cursor-pointer hover:opacity-80 transition-opacity"
+                      style={{ maxHeight: '200px' }}
+                      onClick={() => {
+                        setSelectedImage(msg.additional_attributes?.file_url || msg.file_url);
+                        setShowImageModal(true);
+                      }}
+                      onError={(e) => {
+                        console.log('Erro ao carregar imagem:', e);
+                        e.target.style.display = 'none';
+                      }}
+                    />
+>>>>>>> 8c56b62450b45f82237bce9672b2c4bcd20a31e4
                   </div>
                 )}
                 
                 {/* Mostrar vídeo se for uma mensagem de mídia com vídeo */}
+<<<<<<< HEAD
                 {isMediaMessage && (msg.message_type === 'video' || msg.media_type === 'video') && (
+=======
+                {isMediaMessage && msg.media_type === 'video' && (
+>>>>>>> 8c56b62450b45f82237bce9672b2c4bcd20a31e4
                   <div className="mb-2">
                     <video 
                       src={msg.additional_attributes?.file_url || msg.file_url || (msg.file ? URL.createObjectURL(msg.file) : null)} 
@@ -1516,6 +1556,7 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
                   </div>
                 )}
                 
+<<<<<<< HEAD
                 {/* Player de áudio customizado para message_type audio ou media_type audio, ptt ou myaudio */}
                 {(() => {
                   const isAudioType = (msg.message_type === 'audio') || 
@@ -1526,11 +1567,25 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
                   if (isAudioType || msg.message_type === 'audio' || msg.media_type === 'ptt' || msg.media_type === 'audio') {
                     console.log(' DEBUG: MENSAGEM DE ÁUDIO DETECTADA NO FRONTEND:', {
                       message_type: msg.message_type,
+=======
+                {/* Player de áudio customizado para media_type audio, ptt ou myaudio */}
+                {(() => {
+                  const isAudioType = ['audio', 'ptt', 'myaudio'].includes(msg.media_type?.toLowerCase());
+                  const hasFileUrl = msg.additional_attributes?.file_url || msg.file_url;
+                  
+                  // Log específico para mensagens de áudio
+                  if (isAudioType || msg.media_type === 'ptt' || msg.media_type === 'audio') {
+                    console.log(' DEBUG: MENSAGEM DE ÁUDIO DETECTADA NO FRONTEND:', {
+>>>>>>> 8c56b62450b45f82237bce9672b2c4bcd20a31e4
                       media_type: msg.media_type,
                       media_type_lower: msg.media_type?.toLowerCase(),
                       isAudioType: isAudioType,
                       hasFileUrl: hasFileUrl,
                       file_url: msg.additional_attributes?.file_url || msg.file_url,
+<<<<<<< HEAD
+=======
+                      message_type: msg.message_type,
+>>>>>>> 8c56b62450b45f82237bce9672b2c4bcd20a31e4
                       additional_attributes: msg.additional_attributes,
                       shouldRender: isAudioType && hasFileUrl,
                       isCustomer: isCustomer,
@@ -1555,6 +1610,7 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
                   </div>
                 )}
                 
+<<<<<<< HEAD
                 {/* Mostrar conteúdo da mensagem se houver conteúdo E não for uma mensagem de mídia */}
                 {content && !isMediaMessage && (
                   <span className="whitespace-pre-wrap break-words">{content}</span>
@@ -1566,6 +1622,12 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
                     <span className="whitespace-pre-wrap break-words">{content}</span>
                   </div>
                 )}
+=======
+                {/* Mostrar conteúdo da mensagem se houver conteúdo */}
+                {content && (
+                  <span className="whitespace-pre-wrap break-words">{content}</span>
+                )}
+>>>>>>> 8c56b62450b45f82237bce9672b2c4bcd20a31e4
               </div>
               <div className={`flex items-center mt-1 space-x-1 text-xs text-muted-foreground ${
                 isCustomer ? 'justify-start' : 'justify-end'
@@ -1760,10 +1822,14 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
               className="niochat-input min-h-[40px] max-h-32 resize-none pr-10"
               rows={1}
             />
+<<<<<<< HEAD
             <button 
               onClick={() => setShowEmojiPicker(true)}
               className="absolute right-2 top-1/2 transform -translate-y-1/2 p-1 text-muted-foreground hover:text-card-foreground"
             >
+=======
+            <button className="absolute right-2 top-1/2 transform -translate-y-1/2 p-1 text-muted-foreground hover:text-card-foreground">
+>>>>>>> 8c56b62450b45f82237bce9672b2c4bcd20a31e4
               <Smile className="w-4 h-4" />
             </button>
               </>
@@ -1968,6 +2034,7 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
           <DialogHeader>
             <DialogTitle>Reagir à mensagem</DialogTitle>
           </DialogHeader>
+<<<<<<< HEAD
           <div className="grid grid-cols-8 gap-2 p-4">
             {[
               '👍', '❤️', '😂', '😮', '😢', '😡', '👏', '🙏', 
@@ -1979,11 +2046,18 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
               '🤔', '🤭', '🤫', '🤥', '😶', '😐', '😑', '😯',
               '😦', '😧', '😮', '😲', '🥱', '😴', '🤤', '😪'
             ].map((emoji) => (
+=======
+          <div className="grid grid-cols-6 gap-2 p-4">
+            {['👍', '❤️', '😂', '😮', '😢', '😡', '👏', '🙏', '🔥', '💯', '✨', '🎉'].map((emoji) => (
+>>>>>>> 8c56b62450b45f82237bce9672b2c4bcd20a31e4
               <button
                 key={emoji}
                 onClick={() => sendReaction(selectedMessageForReaction?.id, emoji)}
                 className="text-2xl p-2 hover:bg-muted rounded-lg transition-colors"
+<<<<<<< HEAD
                 title={emoji}
+=======
+>>>>>>> 8c56b62450b45f82237bce9672b2c4bcd20a31e4
               >
                 {emoji}
               </button>
@@ -1998,6 +2072,7 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
         </DialogContent>
       </Dialog>
 
+<<<<<<< HEAD
       {/* Emoji Picker */}
       <EmojiPicker
         isOpen={showEmojiPicker}
@@ -2005,6 +2080,8 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
         onEmojiSelect={handleEmojiSelect}
       />
 
+=======
+>>>>>>> 8c56b62450b45f82237bce9672b2c4bcd20a31e4
       {/* Modal de Confirmação de Exclusão */}
       <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
         <DialogContent className="max-w-sm w-full">
