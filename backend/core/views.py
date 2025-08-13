@@ -768,48 +768,7 @@ class CanalViewSet(viewsets.ModelViewSet):
             logger.error(f'Erro ao verificar código Telegram: {str(e)}')
             return Response({'success': False, 'error': str(e)}, status=500)
 
-    @action(detail=False, methods=['post'])
-    def request_telegram_code(self, request):
-        """Solicitar código SMS diretamente para teste"""
-        try:
-            # Dados de teste do Telegram
-            test_api_id = "28698952"
-            test_api_hash = "aca543fd2a4822a09b90c2226328411d"
-            test_app_title = "app_niochat"
-            test_short_name = "niochat"
-            
-            # Número de telefone do request
-            phone_number = request.data.get('phone_number')
-            if not phone_number:
-                return Response({'success': False, 'error': 'Número de telefone é obrigatório'}, status=400)
-            
-            # Criar canal de teste
-            test_channel = Canal(
-                nome='test_telegram',
-                tipo='telegram',
-                api_id=test_api_id,
-                api_hash=test_api_hash,
-                app_title=test_app_title,
-                short_name=test_short_name,
-                phone_number=phone_number,
-                ativo=True
-            )
-            
-            logger.info(f'Solicitando código SMS para teste: {phone_number}')
-            
-            # Executar envio de código assíncrono
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                result = loop.run_until_complete(telegram_service.send_code(test_channel))
-                logger.info(f'Resultado do envio de código de teste: {result}')
-                return Response(result)
-            finally:
-                loop.close()
-                
-        except Exception as e:
-            logger.error(f'Erro ao solicitar código de teste: {str(e)}')
-            return Response({'success': False, 'error': str(e)}, status=500)
+
 
     @action(detail=False, methods=['get'], url_path='disponiveis')
     def disponiveis(self, request):
@@ -1586,13 +1545,354 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     
     def get_queryset(self):
         user = self.request.user
-        if user.user_type == 'superadmin':
-            return models.AuditLog.objects.all().order_by('-timestamp')
-        else:
+        queryset = models.AuditLog.objects.all()
+        
+        # Filtrar por provedor se o usuário não for superadmin
+        if user.user_type != 'superadmin':
             provedores = Provedor.objects.filter(admins=user)
             if provedores.exists():
-                return models.AuditLog.objects.filter(provedor__in=provedores).order_by('-timestamp')
-            return models.AuditLog.objects.none()
+                queryset = queryset.filter(provedor__in=provedores)
+            else:
+                return models.AuditLog.objects.none()
+        
+        # Aplicar filtros adicionais
+        action_type = self.request.query_params.get('action_type')
+        if action_type:
+            queryset = queryset.filter(action=action_type)
+        
+        # Filtro para conversas encerradas
+        conversation_closed = self.request.query_params.get('conversation_closed')
+        if conversation_closed == 'true':
+            queryset = queryset.filter(
+                action__in=['conversation_closed_agent', 'conversation_closed_ai']
+            )
+        
+        # Filtro por provedor específico
+        provedor_id = self.request.query_params.get('provedor_id')
+        if provedor_id:
+            queryset = queryset.filter(provedor_id=provedor_id)
+        
+        # Filtro por data
+        date_from = self.request.query_params.get('date_from')
+        if date_from:
+            queryset = queryset.filter(timestamp__date__gte=date_from)
+        
+        date_to = self.request.query_params.get('date_to')
+        if date_to:
+            queryset = queryset.filter(timestamp__date__lte=date_to)
+        
+        # Filtro por usuário
+        user_id = self.request.query_params.get('user_id')
+        if user_id:
+            queryset = queryset.filter(user_id=user_id)
+        
+        return queryset.order_by('-timestamp')
+    
+    @action(detail=False, methods=['get'])
+    def conversation_audit(self, request):
+        """Auditoria completa de conversas para o dono do provedor"""
+        user = request.user
+        provedor_id = request.query_params.get('provedor_id')
+        
+        # Verificar se o usuário é dono do provedor
+        if user.user_type != 'superadmin':
+            provedores = Provedor.objects.filter(admins=user)
+            if not provedores.exists():
+                return Response({'error': 'Acesso negado'}, status=403)
+            
+            if provedor_id and int(provedor_id) not in [p.id for p in provedores]:
+                return Response({'error': 'Acesso negado a este provedor'}, status=403)
+        
+        # Importar modelos necessários
+        from conversations.models import Conversation, Contact, Message
+        from django.db.models import Q, Count, Avg
+        from django.utils import timezone
+        
+        # Construir queryset base
+        if provedor_id:
+            provedor_filter = Q(inbox__provedor_id=provedor_id)
+        else:
+            if user.user_type == 'superadmin':
+                provedor_filter = Q()
+            else:
+                provedor_filter = Q(inbox__provedor__in=provedores)
+        
+        # Filtros adicionais
+        status_filter = request.query_params.get('status')
+        if status_filter:
+            provedor_filter &= Q(status=status_filter)
+        
+        date_from = request.query_params.get('date_from')
+        if date_from:
+            provedor_filter &= Q(created_at__date__gte=date_from)
+        
+        date_to = request.query_params.get('date_to')
+        if date_to:
+            provedor_filter &= Q(created_at__date__lte=date_to)
+        
+        agent_id = request.query_params.get('agent_id')
+        if agent_id:
+            provedor_filter &= Q(assigned_agent_id=agent_id)
+        
+        conversation_id = request.query_params.get('conversation_id')
+        if conversation_id:
+            provedor_filter &= Q(id=conversation_id)
+        
+        # Buscar conversas
+        conversas = Conversation.objects.filter(provedor_filter).select_related(
+            'contact', 'inbox', 'assigned_agent'
+        ).prefetch_related('messages').order_by('-updated_at')
+        
+        # Paginação
+        page = self.paginate_queryset(conversas)
+        if page is not None:
+            from .serializers import ConversationAuditSerializer
+            serializer = ConversationAuditSerializer(page, many=True, context={'request': request})
+            # Definir o modelo dinamicamente
+            serializer.Meta.model = Conversation
+            return self.get_paginated_response(serializer.data)
+        
+        from .serializers import ConversationAuditSerializer
+        serializer = ConversationAuditSerializer(conversas, many=True, context={'request': request})
+        # Definir o modelo dinamicamente
+        serializer.Meta.model = Conversation
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'])
+    def conversation_stats(self, request):
+        """Estatísticas de conversas encerradas para auditoria"""
+        user = request.user
+        queryset = self.get_queryset()
+        
+        # Filtrar apenas conversas encerradas
+        conversation_logs = queryset.filter(
+            action__in=['conversation_closed_agent', 'conversation_closed_ai']
+        )
+        
+        # Estatísticas gerais
+        total_closed = conversation_logs.count()
+        closed_by_agent = conversation_logs.filter(action='conversation_closed_agent').count()
+        closed_by_ai = conversation_logs.filter(action='conversation_closed_ai').count()
+        
+        # Estatísticas por provedor
+        provedor_stats = {}
+        for log in conversation_logs.select_related('provedor'):
+            provedor_name = log.provedor.nome if log.provedor else 'Sem Provedor'
+            if provedor_name not in provedor_stats:
+                provedor_stats[provedor_name] = {
+                    'total': 0,
+                    'by_agent': 0,
+                    'by_ai': 0,
+                    'avg_duration': 0,
+                    'avg_messages': 0
+                }
+            
+            provedor_stats[provedor_name]['total'] += 1
+            if log.action == 'conversation_closed_agent':
+                provedor_stats[provedor_name]['by_agent'] += 1
+            else:
+                provedor_stats[provedor_name]['by_ai'] += 1
+            
+            # Calcular médias
+            if log.conversation_duration:
+                provedor_stats[provedor_name]['avg_duration'] += log.conversation_duration.total_seconds()
+            if log.message_count:
+                provedor_stats[provedor_name]['avg_messages'] += log.message_count
+        
+        # Calcular médias finais
+        for provedor in provedor_stats.values():
+            if provedor['total'] > 0:
+                provedor['avg_duration'] = provedor['avg_duration'] / provedor['total']
+                provedor['avg_messages'] = provedor['avg_messages'] / provedor['total']
+        
+        # Estatísticas por canal
+        channel_stats = {}
+        for log in conversation_logs:
+            channel = log.channel_type or 'Desconhecido'
+            if channel not in channel_stats:
+                channel_stats[channel] = {'total': 0, 'by_agent': 0, 'by_ai': 0}
+            
+            channel_stats[channel]['total'] += 1
+            if log.action == 'conversation_closed_agent':
+                channel_stats[channel]['by_agent'] += 1
+            else:
+                channel_stats[channel]['by_ai'] += 1
+        
+        return Response({
+            'total_conversations_closed': total_closed,
+            'closed_by_agent': closed_by_agent,
+            'closed_by_ai': closed_by_ai,
+            'provedor_stats': provedor_stats,
+            'channel_stats': channel_stats,
+            'percentage_ai_resolved': (closed_by_ai / total_closed * 100) if total_closed > 0 else 0,
+            'percentage_agent_resolved': (closed_by_agent / total_closed * 100) if total_closed > 0 else 0
+        })
+    
+    @action(detail=False, methods=['get'])
+    def export_audit_log(self, request):
+        """Exportar logs de auditoria para análise"""
+        from django.http import HttpResponse
+        import csv
+        from io import StringIO
+        
+        queryset = self.get_queryset()
+        
+        # Criar arquivo CSV
+        output = StringIO()
+        writer = csv.writer(output)
+        
+        # Cabeçalho
+        writer.writerow([
+            'Data/Hora', 'Usuário', 'Ação', 'IP', 'Detalhes', 'Provedor',
+            'ID Conversa', 'Contato', 'Canal', 'Duração', 'Mensagens', 'Tipo Resolução'
+        ])
+        
+        # Dados
+        for log in queryset:
+            duration_str = ''
+            if log.conversation_duration:
+                total_seconds = int(log.conversation_duration.total_seconds())
+                hours = total_seconds // 3600
+                minutes = (total_seconds % 3600) // 60
+                seconds = total_seconds % 60
+                duration_str = f"{hours}h {minutes}m {seconds}s"
+            
+            writer.writerow([
+                log.timestamp.strftime('%d/%m/%Y %H:%M:%S'),
+                log.user.username if log.user else 'Sistema',
+                dict(models.AuditLog.ACTIONS).get(log.action, log.action),
+                log.ip_address or '',
+                log.details or '',
+                log.provedor.nome if log.provedor else '',
+                log.conversation_id or '',
+                log.contact_name or '',
+                log.channel_type or '',
+                duration_str,
+                log.message_count or '',
+                log.resolution_type or ''
+            ])
+        
+        # Preparar resposta
+        output.seek(0)
+        response = HttpResponse(output.getvalue(), content_type='text/csv')
+        response['Content-Disposition'] = 'attachment; filename="audit_log.csv"'
+        
+        return response
+    
+    @action(detail=False, methods=['get'])
+    def detailed_stats(self, request):
+        """Estatísticas detalhadas para dashboard de auditoria"""
+        user = request.user
+        provedor_id = request.query_params.get('provedor_id')
+        
+        # Verificar permissões
+        if user.user_type != 'superadmin':
+            provedores = Provedor.objects.filter(admins=user)
+            if not provedores.exists():
+                return Response({'error': 'Acesso negado'}, status=403)
+            
+            if provedor_id and int(provedor_id) not in [p.id for p in provedores]:
+                return Response({'error': 'Acesso negado a este provedor'}, status=403)
+        
+        # Importar modelos necessários
+        from conversations.models import Conversation, Message
+        from django.db.models import Q, Count, Avg, Sum
+        from django.utils import timezone
+        from datetime import timedelta
+        
+        # Construir filtros
+        if provedor_id:
+            provedor_filter = Q(inbox__provedor_id=provedor_id)
+        else:
+            if user.user_type == 'superadmin':
+                provedor_filter = Q()
+            else:
+                provedor_filter = Q(inbox__provedor__in=provedores)
+        
+        # Período de análise (padrão: últimos 30 dias)
+        days = int(request.query_params.get('days', 30))
+        start_date = timezone.now() - timedelta(days=days)
+        
+        # Estatísticas de conversas
+        conversas_periodo = Conversation.objects.filter(
+            provedor_filter,
+            created_at__gte=start_date
+        )
+        
+        total_conversas = conversas_periodo.count()
+        conversas_abertas = conversas_periodo.filter(status='open').count()
+        conversas_fechadas = conversas_periodo.filter(status='closed').count()
+        conversas_resolvidas = conversas_periodo.filter(status='resolved').count()
+        
+        # Estatísticas de mensagens
+        if provedor_id:
+            mensagens_periodo = Message.objects.filter(
+                conversation__inbox__provedor_id=provedor_id,
+                created_at__gte=start_date
+            )
+        else:
+            if user.user_type == 'superadmin':
+                mensagens_periodo = Message.objects.filter(created_at__gte=start_date)
+            else:
+                mensagens_periodo = Message.objects.filter(
+                    conversation__inbox__provedor__in=provedores,
+                    created_at__gte=start_date
+                )
+        
+        total_mensagens = mensagens_periodo.count()
+        mensagens_cliente = mensagens_periodo.filter(is_from_customer=True).count()
+        mensagens_agente = mensagens_periodo.filter(is_from_customer=False).count()
+        
+        # Estatísticas por dia (últimos 7 dias)
+        daily_stats = []
+        for i in range(7):
+            date = timezone.now().date() - timedelta(days=i)
+            daily_conversas = conversas_periodo.filter(created_at__date=date).count()
+            daily_mensagens = mensagens_periodo.filter(created_at__date=date).count()
+            daily_stats.append({
+                'date': date.strftime('%Y-%m-%d'),
+                'conversas': daily_conversas,
+                'mensagens': daily_mensagens
+            })
+        
+        # Top agentes por conversas encerradas
+        top_agentes = []
+        from django.db.models import Count
+        agentes_stats = Conversation.objects.filter(
+            provedor_filter,
+            status__in=['closed', 'resolved'],
+            assigned_agent__isnull=False,
+            created_at__gte=start_date
+        ).values('assigned_agent__username').annotate(
+            total=Count('id')
+        ).order_by('-total')[:5]
+        
+        top_agentes = [
+            {
+                'username': item['assigned_agent__username'],
+                'total_conversas': item['total']
+            }
+            for item in agentes_stats
+        ]
+        
+        return Response({
+            'periodo_dias': days,
+            'data_inicio': start_date.strftime('%Y-%m-%d'),
+            'data_fim': timezone.now().strftime('%Y-%m-%d'),
+            'conversas': {
+                'total': total_conversas,
+                'abertas': conversas_abertas,
+                'fechadas': conversas_fechadas,
+                'resolvidas': conversas_resolvidas
+            },
+            'mensagens': {
+                'total': total_mensagens,
+                'cliente': mensagens_cliente,
+                'agente': mensagens_agente
+            },
+            'daily_stats': daily_stats,
+            'top_agentes': top_agentes
+        })
 
 class CompanyViewSet(viewsets.ModelViewSet):
     queryset = Company.objects.all()
@@ -1893,44 +2193,7 @@ class ResetPasswordView(APIView):
             return Response({'error': 'Erro ao alterar senha'}, status=400)
 
 
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def test_conversation_avatar(request, conversation_id):
-    """Endpoint de teste para verificar se a conversa está retornando o avatar"""
-    try:
-        conversation = Conversation.objects.get(id=conversation_id)
-        serializer = ConversationSerializer(conversation)
-        return Response({
-            'success': True,
-            'conversation': serializer.data,
-            'contact_avatar': conversation.contact.avatar if conversation.contact else None
-        })
-    except Conversation.DoesNotExist:
-        return Response({'success': False, 'error': 'Conversa não encontrada'}, status=404)
-    except Exception as e:
-        return Response({'success': False, 'error': str(e)}, status=500)
 
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def test_contact_avatar(request, contact_id):
-    """Endpoint de teste para verificar se o contato tem avatar"""
-    try:
-        from conversations.models import Contact
-        contact = Contact.objects.get(id=contact_id)
-        return Response({
-            'success': True,
-            'contact': {
-                'id': contact.id,
-                'name': contact.name,
-                'phone': contact.phone,
-                'avatar': contact.avatar
-            }
-        })
-    except Contact.DoesNotExist:
-        return Response({'success': False, 'error': 'Contato não encontrado'}, status=404)
-    except Exception as e:
-        return Response({'success': False, 'error': str(e)}, status=500)
 
 
 @api_view(['GET'])
@@ -2171,6 +2434,8 @@ def frontend_view(request):
     """
     return HttpResponse(html_content, content_type='text/html')
 
+@api_view(['GET'])
+@permission_classes([AllowAny])
 def health_check(request):
     """Health check endpoint"""
     from datetime import datetime

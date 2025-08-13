@@ -53,7 +53,7 @@ class TelegramMTProtoService:
                     'message': 'Necessário autorizar via código SMS'
                 }
             
-            # Testar conexão
+            # Verificar conexão
             me = await client.get_me()
             if me:
                 # Armazenar cliente ativo

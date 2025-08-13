@@ -21,14 +21,9 @@ urlpatterns = [
     path('users/list/', views.UserListView.as_view(), name='users_list'),
     path('dashboard/stats/', views.DashboardStatsView.as_view(), name='dashboard_stats'),
     path('atendimento/ia/', views.AtendimentoIAView.as_view(), name='atendimento_ia'),
-    path('test/conversation/<int:conversation_id>/avatar/', views.test_conversation_avatar, name='test_conversation_avatar'),
-    path('test/contact/<int:contact_id>/avatar/', views.test_contact_avatar, name='test_contact_avatar'),
-<<<<<<< HEAD
+
     # Removido para evitar conflito com conversations.urls
     # path('media/<path:path>/', views.serve_media_file, name='serve_media_file'),
-=======
-    path('media/<path:path>/', views.serve_media_file, name='serve_media_file'),
->>>>>>> 8c56b62450b45f82237bce9672b2c4bcd20a31e4
     path('uazapi/file/<str:file_id>/', views.serve_uazapi_file, name='serve_uazapi_file'),
     path('health/', views.health_check, name='health_check'),
     path('', views.frontend_view, name='frontend'),

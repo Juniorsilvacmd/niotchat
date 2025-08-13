@@ -185,14 +185,32 @@ export default function ConversasDashboard() {
     setMenuOpenId(null);
     if (!conversa?.id) return;
     const token = localStorage.getItem('token');
-    if (!window.confirm('Tem certeza que deseja encerrar e remover este atendimento?')) return;
+    
+    // Perguntar tipo de resolução
+    const resolutionType = prompt('Tipo de resolução (ex: resolvido, transferido, cancelado):') || 'resolvido';
+    const resolutionNotes = prompt('Observações sobre a resolução (opcional):') || '';
+    
+    if (!window.confirm('Tem certeza que deseja encerrar este atendimento?')) return;
+    
     try {
-      const response = await axios.delete(`/api/conversations/${conversa.id}/`, {
+      // Usar a API de encerramento por agente
+      const response = await axios.post(`/api/conversations/${conversa.id}/close_conversation_agent/`, {
+        resolution_type: resolutionType,
+        resolution_notes: resolutionNotes
+      }, {
         headers: { Authorization: `Token ${token}` }
       });
-      console.log('Resposta do delete:', response.status);
-      setConversas(prev => prev.filter(c => c.id !== conversa.id));
-      alert('Atendimento encerrado e removido com sucesso!');
+      
+      console.log('Resposta do encerramento:', response.status);
+      
+      // Atualizar a conversa na lista (mudar status para 'closed')
+      setConversas(prev => prev.map(c => 
+        c.id === conversa.id 
+          ? { ...c, status: 'closed' }
+          : c
+      ));
+      
+      alert('Atendimento encerrado com sucesso!');
     } catch (e) {
       console.error('Erro ao encerrar atendimento:', e);
       console.error('Status:', e.response?.status);

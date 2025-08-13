@@ -82,9 +82,165 @@ class LabelSerializer(serializers.ModelSerializer):
 
 class AuditLogSerializer(serializers.ModelSerializer):
     user = serializers.StringRelatedField()
+    provedor = serializers.StringRelatedField()
+    
     class Meta:
         model = AuditLog
-        fields = ['id', 'user', 'action', 'timestamp', 'ip_address', 'details']
+        fields = [
+            'id', 'user', 'action', 'timestamp', 'ip_address', 'details',
+            'provedor', 'conversation_id', 'contact_name', 'channel_type',
+            'conversation_duration', 'message_count', 'resolution_type'
+        ]
+    
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        
+        # Formatar duração da conversa para exibição
+        if instance.conversation_duration:
+            total_seconds = int(instance.conversation_duration.total_seconds())
+            hours = total_seconds // 3600
+            minutes = (total_seconds % 3600) // 60
+            seconds = total_seconds % 60
+            
+            if hours > 0:
+                data['conversation_duration_formatted'] = f"{hours}h {minutes}m {seconds}s"
+            elif minutes > 0:
+                data['conversation_duration_formatted'] = f"{minutes}m {seconds}s"
+            else:
+                data['conversation_duration_formatted'] = f"{seconds}s"
+        else:
+            data['conversation_duration_formatted'] = None
+        
+        # Formatar ação para exibição em português
+        action_display = dict(AuditLog.ACTIONS).get(instance.action, instance.action)
+        data['action_display'] = action_display
+        
+        return data
+
+
+class ConversationAuditSerializer(serializers.ModelSerializer):
+    """Serializer para auditoria completa de conversas"""
+    contact = serializers.SerializerMethodField()
+    inbox = serializers.SerializerMethodField()
+    assigned_agent = serializers.SerializerMethodField()
+    messages = serializers.SerializerMethodField()
+    audit_logs = serializers.SerializerMethodField()
+    duration = serializers.SerializerMethodField()
+    message_count = serializers.SerializerMethodField()
+    status_display = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = None  # Será definido dinamicamente
+        fields = [
+            'id', 'contact', 'inbox', 'assigned_agent', 'status', 'status_display',
+            'messages', 'audit_logs', 'duration', 'message_count',
+            'created_at', 'updated_at', 'last_message_at'
+        ]
+    
+    def get_contact(self, obj):
+        if hasattr(obj, 'contact') and obj.contact:
+            avatar_url = None
+            try:
+                if obj.contact.avatar:
+                    avatar_url = obj.contact.avatar.url
+            except:
+                pass
+            
+            return {
+                'id': obj.contact.id,
+                'name': obj.contact.name,
+                'phone': obj.contact.phone,
+                'email': obj.contact.email,
+                'avatar': avatar_url
+            }
+        return None
+    
+    def get_inbox(self, obj):
+        if hasattr(obj, 'inbox') and obj.inbox:
+            return {
+                'id': obj.inbox.id,
+                'name': obj.inbox.name,
+                'channel_type': obj.inbox.channel_type,
+                'provedor': obj.inbox.provedor.nome if obj.inbox.provedor else None
+            }
+        return None
+    
+    def get_assigned_agent(self, obj):
+        if hasattr(obj, 'assigned_agent') and obj.assigned_agent:
+            return {
+                'id': obj.assigned_agent.id,
+                'username': obj.assigned_agent.username,
+                'first_name': obj.assigned_agent.first_name,
+                'last_name': obj.assigned_agent.last_name,
+                'user_type': obj.assigned_agent.user_type
+            }
+        return None
+    
+    def get_messages(self, obj):
+        if hasattr(obj, 'messages') and obj.messages.exists():
+            messages = []
+            for msg in obj.messages.all()[:50]:  # Limitar a 50 mensagens
+                message_data = {
+                    'id': msg.id,
+                    'content': msg.content,
+                    'message_type': msg.message_type,
+                    'is_from_customer': msg.is_from_customer,
+                    'created_at': msg.created_at
+                }
+                
+                # Adicionar campos opcionais se existirem
+                if hasattr(msg, 'media_type'):
+                    message_data['media_type'] = msg.media_type
+                if hasattr(msg, 'file_url'):
+                    message_data['file_url'] = msg.file_url
+                
+                messages.append(message_data)
+            return messages
+        return []
+    
+    def get_audit_logs(self, obj):
+        from .models import AuditLog
+        logs = AuditLog.objects.filter(
+            conversation_id=obj.id,
+            action__in=['conversation_closed_agent', 'conversation_closed_ai', 'conversation_transferred', 'conversation_assigned']
+        ).order_by('-timestamp')
+        
+        return [{
+            'id': log.id,
+            'action': log.action,
+            'action_display': dict(AuditLog.ACTIONS).get(log.action, log.action),
+            'user': log.user.username if log.user else None,
+            'timestamp': log.timestamp,
+            'details': log.details,
+            'resolution_type': log.resolution_type
+        } for log in logs]
+    
+    def get_duration(self, obj):
+        if obj.created_at and obj.updated_at:
+            duration = obj.updated_at - obj.created_at
+            total_seconds = int(duration.total_seconds())
+            hours = total_seconds // 3600
+            minutes = (total_seconds % 3600) // 60
+            if hours > 0:
+                return f"{hours}h {minutes}m"
+            else:
+                return f"{minutes}m"
+        return "0m"
+    
+    def get_message_count(self, obj):
+        if hasattr(obj, 'messages'):
+            return obj.messages.count()
+        return 0
+    
+    def get_status_display(self, obj):
+        status_map = {
+            'open': 'Em Andamento',
+            'pending': 'Pendente',
+            'closed': 'Encerrada',
+            'resolved': 'Resolvida',
+            'transferred': 'Transferida'
+        }
+        return status_map.get(obj.status, obj.status)
 
 class SystemConfigSerializer(serializers.ModelSerializer):
     class Meta:

@@ -1,0 +1,27 @@
+[Unit]
+Description=NioChat Backend Service
+After=network.target postgresql.service redis-server.service
+Wants=postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/app_niochat/backend
+Environment=PATH=/var/www/app_niochat/venv/bin
+Environment=PYTHONPATH=/var/www/app_niochat/backend
+ExecStart=/var/www/app_niochat/venv/bin/daphne -b 0.0.0.0 -p 8000 niochat.asgi:application
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Configurações de segurança
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/www/app_niochat
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

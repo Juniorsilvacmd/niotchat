@@ -63,7 +63,7 @@ class UazapiClient:
         return resp.json()
     
     def get_server_status(self):
-        """Testa se o token funciona com o endpoint /status"""
+        """Verifica se o token funciona com o endpoint /status"""
         url = f"{self.base_url}/status"
         headers = {
             "Accept": "application/json",

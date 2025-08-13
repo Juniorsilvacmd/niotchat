@@ -240,39 +240,7 @@ class EmailIntegrationViewSet(viewsets.ModelViewSet):
                 return EmailIntegration.objects.filter(provedor__in=provedores)
             return EmailIntegration.objects.none()
     
-    @action(detail=True, methods=['post'])
-    def test_connection(self, request, pk=None):
-        """Testar conexão de e-mail"""
-        integration = self.get_object()
-        
-        try:
-            from .email_service import EmailService
-            service = EmailService(integration)
-            
-            # Testar conexão IMAP
-            imap_success = service.connect_imap()
-            if service.imap_client:
-                service.imap_client.close()
-                service.imap_client.logout()
-            
-            # Testar conexão SMTP
-            smtp_success = service.connect_smtp()
-            if service.smtp_client:
-                service.smtp_client.quit()
-            
-            if imap_success and smtp_success:
-                return Response({'status': 'connection successful'})
-            else:
-                return Response(
-                    {'error': 'Connection failed', 'imap': imap_success, 'smtp': smtp_success},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-        except Exception as e:
-            return Response(
-                {'error': str(e)},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+
     
     @action(detail=True, methods=['post'])
     def start_monitoring(self, request, pk=None):

@@ -22,6 +22,60 @@ import os
 from datetime import datetime
 
 
+def log_conversation_closure(request, conversation, action_type, resolution_type=None, user=None):
+    """
+    Função utilitária para registrar auditoria de conversas encerradas
+    """
+    print(f"🔍 DEBUG: Iniciando log_conversation_closure")
+    print(f"🔍 DEBUG: action_type: {action_type}")
+    print(f"🔍 DEBUG: resolution_type: {resolution_type}")
+    print(f"🔍 DEBUG: user: {user}")
+    print(f"🔍 DEBUG: conversation.id: {conversation.id}")
+    
+    try:
+        # Calcular duração da conversa
+        duration = None
+        if conversation.created_at and conversation.updated_at:
+            duration = conversation.updated_at - conversation.created_at
+            print(f"🔍 DEBUG: Duração calculada: {duration}")
+        
+        # Contar mensagens
+        message_count = conversation.messages.count()
+        print(f"🔍 DEBUG: Quantidade de mensagens: {message_count}")
+        
+        # Obter provedor da conversa
+        provedor = conversation.inbox.provedor if conversation.inbox else None
+        print(f"🔍 DEBUG: Provedor: {provedor}")
+        
+        # Obter IP
+        ip_address = request.META.get('REMOTE_ADDR') if hasattr(request, 'META') else '127.0.0.1'
+        print(f"🔍 DEBUG: IP: {ip_address}")
+        
+        # Criar log de auditoria
+        audit_log = AuditLog.objects.create(
+            user=user or request.user,
+            action=action_type,
+            ip_address=ip_address,
+            details=f"Conversa encerrada com {conversation.contact.name} via {conversation.inbox.channel_type}",
+            provedor=provedor,
+            conversation_id=conversation.id,
+            contact_name=conversation.contact.name,
+            channel_type=conversation.inbox.channel_type,
+            conversation_duration=duration,
+            message_count=message_count,
+            resolution_type=resolution_type
+        )
+        
+        print(f"✅ DEBUG: AuditLog criado com sucesso! ID: {audit_log.id}")
+        print(f"✅ DEBUG: Action: {audit_log.action}")
+        print(f"✅ DEBUG: User: {audit_log.user}")
+        
+    except Exception as e:
+        print(f"❌ ERRO ao registrar auditoria de conversa: {e}")
+        import traceback
+        traceback.print_exc()
+
+
 class ContactViewSet(viewsets.ModelViewSet):
     queryset = Contact.objects.all()
     serializer_class = ContactSerializer
@@ -336,6 +390,157 @@ class ConversationViewSet(viewsets.ModelViewSet):
             return Response({'success': True})
         except User.DoesNotExist:
             return Response({'error': 'Usuário não encontrado'}, status=status.HTTP_404_NOT_FOUND)
+
+    @action(detail=True, methods=['post'])
+    def close_conversation_agent(self, request, pk=None):
+        """Encerrar conversa por atendente"""
+        print(f"🔍 DEBUG: close_conversation_agent chamada para conversa {pk}")
+        print(f"🔍 DEBUG: User: {request.user}")
+        print(f"🔍 DEBUG: Request data: {request.data}")
+        
+        conversation = self.get_object()
+        user = request.user
+        
+        print(f"🔍 DEBUG: Conversa encontrada: {conversation.id} - Status atual: {conversation.status}")
+        
+        # Verificar se o usuário tem permissão para encerrar a conversa
+        if not self._can_manage_conversation(user, conversation):
+            print(f"❌ DEBUG: Usuário sem permissão para encerrar conversa")
+            return Response({'error': 'Sem permissão para encerrar esta conversa'}, status=403)
+        
+        # Verificar se a conversa já está fechada
+        if conversation.status == 'closed':
+            print(f"❌ DEBUG: Conversa já está fechada")
+            return Response({'error': 'Conversa já está fechada'}, status=400)
+        
+        # Obter dados da requisição
+        resolution_type = request.data.get('resolution_type', 'resolved')
+        resolution_notes = request.data.get('resolution_notes', '')
+        
+        print(f"🔍 DEBUG: Resolution type: {resolution_type}")
+        print(f"🔍 DEBUG: Resolution notes: {resolution_notes}")
+        
+        # Atualizar status da conversa
+        conversation.status = 'closed'
+        conversation.updated_at = timezone.now()
+        conversation.save()
+        
+        print(f"✅ DEBUG: Status da conversa atualizado para 'closed'")
+        
+        # Registrar auditoria
+        print(f"🔍 DEBUG: Chamando log_conversation_closure...")
+        log_conversation_closure(
+            request=request,
+            conversation=conversation,
+            action_type='conversation_closed_agent',
+            resolution_type=resolution_type,
+            user=user
+        )
+        print(f"✅ DEBUG: log_conversation_closure executado")
+        
+        # Adicionar mensagem de sistema sobre o encerramento
+        Message.objects.create(
+            conversation=conversation,
+            content=f"Conversa encerrada por {user.get_full_name() or user.username}. Resolução: {resolution_type}. {resolution_notes}",
+            message_type='text',
+            is_from_customer=False,
+            additional_attributes={
+                'system_message': True,
+                'action': 'conversation_closed',
+                'closed_by': user.id,
+                'resolution_type': resolution_type,
+                'resolution_notes': resolution_notes
+            }
+        )
+        
+        print(f"✅ DEBUG: Mensagem de sistema criada")
+        
+        return Response({
+            'status': 'success',
+            'message': 'Conversa encerrada com sucesso',
+            'conversation_id': conversation.id,
+            'resolution_type': resolution_type
+        })
+    
+    @action(detail=True, methods=['post'])
+    def close_conversation_ai(self, request, pk=None):
+        """Encerrar conversa por IA"""
+        conversation = self.get_object()
+        user = request.user
+        
+        # Verificar se o usuário tem permissão para encerrar a conversa
+        if not self._can_manage_conversation(user, conversation):
+            return Response({'error': 'Sem permissão para encerrar esta conversa'}, status=403)
+        
+        # Verificar se a conversa já está fechada
+        if conversation.status == 'closed':
+            return Response({'error': 'Conversa já está fechada'}, status=400)
+        
+        # Obter dados da requisição
+        resolution_type = request.data.get('resolution_type', 'ai_resolved')
+        resolution_notes = request.data.get('resolution_notes', '')
+        ai_reason = request.data.get('ai_reason', 'Resolução automática por IA')
+        
+        # Atualizar status da conversa
+        conversation.status = 'closed'
+        conversation.updated_at = timezone.now()
+        conversation.save()
+        
+        # Registrar auditoria
+        log_conversation_closure(
+            request=request,
+            conversation=conversation,
+            action_type='conversation_closed_ai',
+            resolution_type=resolution_type,
+            user=user
+        )
+        
+        # Adicionar mensagem de sistema sobre o encerramento por IA
+        Message.objects.create(
+            conversation=conversation,
+            content=f"Conversa encerrada automaticamente pela IA. Motivo: {ai_reason}. Resolução: {resolution_type}. {resolution_notes}",
+            message_type='text',
+            is_from_customer=False,
+            additional_attributes={
+                'system_message': True,
+                'action': 'conversation_closed_ai',
+                'closed_by_ai': True,
+                'ai_reason': ai_reason,
+                'resolution_type': resolution_type,
+                'resolution_notes': resolution_notes
+            }
+        )
+        
+        return Response({
+            'status': 'success',
+            'message': 'Conversa encerrada pela IA com sucesso',
+            'conversation_id': conversation.id,
+            'resolution_type': resolution_type,
+            'ai_reason': ai_reason
+        })
+    
+    def _can_manage_conversation(self, user, conversation):
+        """Verificar se o usuário pode gerenciar a conversa"""
+        # Superadmin pode gerenciar todas as conversas
+        if user.user_type == 'superadmin':
+            return True
+        
+        # Admin pode gerenciar conversas do seu provedor
+        if user.user_type == 'admin':
+            provedores = Provedor.objects.filter(admins=user)
+            return provedores.filter(id=conversation.inbox.provedor.id).exists()
+        
+        # Atendente pode gerenciar conversas atribuídas a ele ou da sua equipe
+        if user.user_type == 'agent':
+            # Verificar se a conversa está atribuída ao usuário
+            if conversation.assignee == user:
+                return True
+            
+            # Verificar se o usuário está na equipe que gerencia esta conversa
+            user_teams = TeamMember.objects.filter(user=user)
+            return user_teams.filter(team__provedor=conversation.inbox.provedor).exists()
+        
+        return False
 
 
 
@@ -1477,50 +1682,17 @@ class TeamMemberViewSet(viewsets.ModelViewSet):
             return TeamMember.objects.none()
 
 
-<<<<<<< HEAD
-from django.http import FileResponse, Http404, JsonResponse
-from django.views.decorators.csrf import csrf_exempt
-from django.utils.decorators import method_decorator
-
-@csrf_exempt
-=======
->>>>>>> 8c56b62450b45f82237bce9672b2c4bcd20a31e4
 def serve_media_file(request, conversation_id, filename):
     """
     Serve media files for conversations
     """
-<<<<<<< HEAD
-    print(f"🔍 DEBUG: serve_media_file chamado - conversation_id: {conversation_id}, filename: {filename}")
-    print(f"🔍 DEBUG: Método HTTP: {request.method}")
-    print(f"🔍 DEBUG: User: {request.user}")
-    
     try:
         # Verificar se a conversa existe
         conversation = Conversation.objects.get(id=conversation_id)
-        print(f"🔍 DEBUG: Conversa encontrada: {conversation.id}")
-=======
-    try:
-        # Verificar se a conversa existe
-        conversation = Conversation.objects.get(id=conversation_id)
->>>>>>> 8c56b62450b45f82237bce9672b2c4bcd20a31e4
         
         # Construir caminho do arquivo
         media_dir = os.path.join(settings.MEDIA_ROOT, 'messages', str(conversation_id))
         file_path = os.path.join(media_dir, filename)
-<<<<<<< HEAD
-        print(f"🔍 DEBUG: Caminho do arquivo: {file_path}")
-        
-        # Verificar se o arquivo existe
-        if not os.path.exists(file_path):
-            print(f"❌ DEBUG: Arquivo não encontrado: {file_path}")
-            raise Http404("Arquivo não encontrado")
-        
-        print(f"✅ DEBUG: Arquivo encontrado: {file_path}")
-        
-        # Verificar se o arquivo está dentro do diretório de mídia (segurança)
-        if not file_path.startswith(settings.MEDIA_ROOT):
-            print(f"❌ DEBUG: Acesso negado - arquivo fora do diretório de mídia")
-=======
         
         # Verificar se o arquivo existe
         if not os.path.exists(file_path):
@@ -1528,7 +1700,6 @@ def serve_media_file(request, conversation_id, filename):
         
         # Verificar se o arquivo está dentro do diretório de mídia (segurança)
         if not file_path.startswith(settings.MEDIA_ROOT):
->>>>>>> 8c56b62450b45f82237bce9672b2c4bcd20a31e4
             raise Http404("Acesso negado")
         
         # Determinar o tipo MIME baseado na extensão
@@ -1537,21 +1708,6 @@ def serve_media_file(request, conversation_id, filename):
         if not content_type:
             content_type = 'application/octet-stream'
         
-<<<<<<< HEAD
-        print(f"🔍 DEBUG: Content-Type: {content_type}")
-        
-        # Servir o arquivo
-        response = FileResponse(open(file_path, 'rb'), content_type=content_type)
-        response['Content-Disposition'] = f'inline; filename="{filename}"'
-        print(f"✅ DEBUG: Arquivo servido com sucesso")
-        return response
-        
-    except Conversation.DoesNotExist:
-        print(f"❌ DEBUG: Conversa não encontrada: {conversation_id}")
-        raise Http404("Conversa não encontrada")
-    except Exception as e:
-        print(f"❌ DEBUG: Erro ao servir arquivo de mídia: {e}")
-=======
         # Servir o arquivo
         response = FileResponse(open(file_path, 'rb'), content_type=content_type)
         response['Content-Disposition'] = f'inline; filename="{filename}"'
@@ -1561,52 +1717,8 @@ def serve_media_file(request, conversation_id, filename):
         raise Http404("Conversa não encontrada")
     except Exception as e:
         print(f"Erro ao servir arquivo de mídia: {e}")
->>>>>>> 8c56b62450b45f82237bce9672b2c4bcd20a31e4
         raise Http404("Erro ao servir arquivo")
 
 
-def test_media_access(request, conversation_id):
-    """
-    Test endpoint to check if media files are accessible
-    """
-    try:
-        conversation = Conversation.objects.get(id=conversation_id)
-        
-        # Listar arquivos de mídia da conversa
-        media_dir = os.path.join(settings.MEDIA_ROOT, 'messages', str(conversation_id))
-        
-        if not os.path.exists(media_dir):
-            return JsonResponse({
-                'success': False,
-                'error': 'Diretório de mídia não existe',
-                'media_dir': media_dir
-            })
-        
-        files = []
-        for filename in os.listdir(media_dir):
-            file_path = os.path.join(media_dir, filename)
-            if os.path.isfile(file_path):
-                files.append({
-                    'name': filename,
-                    'size': os.path.getsize(file_path),
-                    'url': f'/api/media/messages/{conversation_id}/{filename}/'
-                })
-        
-        return JsonResponse({
-            'success': True,
-            'conversation_id': conversation_id,
-            'media_dir': media_dir,
-            'files': files
-        })
-        
-    except Conversation.DoesNotExist:
-        return JsonResponse({
-            'success': False,
-            'error': 'Conversa não encontrada'
-        })
-    except Exception as e:
-        return JsonResponse({
-            'success': False,
-            'error': str(e)
-        })
+
 

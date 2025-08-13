@@ -231,14 +231,25 @@ class AuditLog(models.Model):
         ('edit', 'Edição'),
         ('create', 'Criação'),
         ('delete', 'Exclusão'),
+        ('conversation_closed_agent', 'Conversa Encerrada por Atendente'),
+        ('conversation_closed_ai', 'Conversa Encerrada por IA'),
+        ('conversation_transferred', 'Conversa Transferida'),
+        ('conversation_assigned', 'Conversa Atribuída'),
         ('other', 'Outro'),
     ]
     user = models.ForeignKey(get_user_model(), on_delete=models.SET_NULL, null=True, blank=True, verbose_name='Usuário')
-    action = models.CharField(max_length=20, choices=ACTIONS)
+    action = models.CharField(max_length=30, choices=ACTIONS)
     timestamp = models.DateTimeField(auto_now_add=True)
     ip_address = models.GenericIPAddressField(null=True, blank=True)
     details = models.TextField(null=True, blank=True)
     provedor = models.ForeignKey('Provedor', on_delete=models.CASCADE, related_name='audit_logs', verbose_name='Provedor', null=True, blank=True)
+    # Campos específicos para auditoria de conversas
+    conversation_id = models.IntegerField(null=True, blank=True, verbose_name='ID da Conversa')
+    contact_name = models.CharField(max_length=255, null=True, blank=True, verbose_name='Nome do Contato')
+    channel_type = models.CharField(max_length=50, null=True, blank=True, verbose_name='Tipo de Canal')
+    conversation_duration = models.DurationField(null=True, blank=True, verbose_name='Duração da Conversa')
+    message_count = models.IntegerField(null=True, blank=True, verbose_name='Quantidade de Mensagens')
+    resolution_type = models.CharField(max_length=50, null=True, blank=True, verbose_name='Tipo de Resolução')
 
     class Meta:
         verbose_name = 'Log de Auditoria'
