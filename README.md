@@ -689,3 +689,4 @@ IA: "Encontrei seu cadastro!
 - Configurações de provedores
 - Webhooks configuráveis
 
+# Teste deploy automático
