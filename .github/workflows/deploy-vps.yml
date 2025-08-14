@@ -36,5 +36,8 @@ jobs:
         key: ${{ secrets.VPS_SSH_KEY }}
         port: ${{ secrets.VPS_PORT }}
         script: |
+          echo "🚀 Iniciando deploy na VPS..."
           cd /var/www/niochat
+          pwd
+          ls -la
           ./deploy.sh
