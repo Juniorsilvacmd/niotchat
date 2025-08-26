@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { Eye, LogIn, LogOut, Edit, Trash2, PlusCircle, User, Filter, Download, BarChart3, Calendar, Search, RefreshCw, X, MessageSquare, Clock, Hash } from 'lucide-react';
+import { Eye, LogIn, LogOut, Edit, Trash2, PlusCircle, User, Filter, Download, BarChart3, Calendar, Search, RefreshCw, X, MessageSquare, Clock, Hash, Bot } from 'lucide-react';
 import axios from 'axios';
 
-export default function AuditLog() {
+export default function AuditLog({ provedorId }) {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -11,8 +11,7 @@ export default function AuditLog() {
     action_type: '',
     date_from: '',
     date_to: '',
-    user_id: '',
-    provedor_id: ''
+    user_id: ''
   });
   const [showFilters, setShowFilters] = useState(false);
   const [pagination, setPagination] = useState({
@@ -25,9 +24,11 @@ export default function AuditLog() {
   const [loadingConversation, setLoadingConversation] = useState(false);
 
   useEffect(() => {
-    fetchLogs();
-    fetchStats();
-  }, [filters, pagination.current]);
+    if (provedorId) {
+      fetchLogs();
+      fetchStats();
+    }
+  }, [provedorId, filters, pagination.current]);
 
   async function fetchLogs() {
     setLoading(true);
@@ -37,6 +38,8 @@ export default function AuditLog() {
       const params = {
         page: pagination.current,
         page_size: pagination.page_size,
+        provedor_id: provedorId, // Filtrar por provedor específico
+        conversation_closed: 'true', // Apenas conversas encerradas
         ...filters
       };
       
@@ -73,7 +76,8 @@ export default function AuditLog() {
     try {
       const token = localStorage.getItem('token');
       const res = await axios.get('/api/audit-logs/conversation_stats/', {
-        headers: { Authorization: `Token ${token}` }
+        headers: { Authorization: `Token ${token}` },
+        params: { provedor_id: provedorId }
       });
       setStats(res.data);
     } catch (e) {
@@ -85,7 +89,7 @@ export default function AuditLog() {
     setLoadingConversation(true);
     try {
       const token = localStorage.getItem('token');
-      const res = await axios.get(`/api/audit-logs/conversation_audit/?conversation_id=${conversationId}`, {
+      const res = await axios.get(`/api/audit-logs/conversation_audit/?conversation_id=${conversationId}&provedor_id=${provedorId}`, {
         headers: { Authorization: `Token ${token}` }
       });
       
@@ -103,7 +107,11 @@ export default function AuditLog() {
   async function exportAuditLog() {
     try {
       const token = localStorage.getItem('token');
-      const params = { ...filters };
+      const params = { 
+        provedor_id: provedorId,
+        conversation_closed: 'true',
+        ...filters 
+      };
       
       const res = await axios.get('/api/audit-logs/export_audit_log/', {
         headers: { Authorization: `Token ${token}` },
@@ -114,7 +122,7 @@ export default function AuditLog() {
       const url = window.URL.createObjectURL(new Blob([res.data]));
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', `audit_log_${new Date().toISOString().split('T')[0]}.csv`);
+      link.setAttribute('download', `auditoria_conversas_${new Date().toISOString().split('T')[0]}.csv`);
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -127,30 +135,31 @@ export default function AuditLog() {
   const getActionIcon = (action) => {
     if (!action) return <Eye className="w-4 h-4 text-muted-foreground" />;
     const a = action.toLowerCase();
-    if (a.includes('login')) return <LogIn className="w-4 h-4 text-blue-500" />;
-    if (a.includes('logout')) return <LogOut className="w-4 h-4 text-gray-500" />;
-    if (a.includes('criou') || a.includes('create')) return <PlusCircle className="w-4 h-4 text-green-500" />;
-    if (a.includes('editou') || a.includes('update') || a.includes('edit')) return <Edit className="w-4 h-4 text-yellow-500" />;
-    if (a.includes('removeu') || a.includes('delete') || a.includes('excluiu')) return <Trash2 className="w-4 h-4 text-red-500" />;
-    if (a.includes('user') || a.includes('usuário')) return <User className="w-4 h-4 text-purple-500" />;
     if (a.includes('conversation_closed_agent')) return <User className="w-4 h-4 text-green-600" />;
-    if (a.includes('conversation_closed_ai')) return <BarChart3 className="w-4 h-4 text-blue-600" />;
+    if (a.includes('conversation_closed_ai')) return <Bot className="w-4 h-4 text-purple-600" />;
+    if (a.includes('conversation_transferred')) return <MessageSquare className="w-4 h-4 text-blue-600" />;
+    if (a.includes('conversation_assigned')) return <User className="w-4 h-4 text-yellow-600" />;
     return <Eye className="w-4 h-4 text-muted-foreground" />;
   };
 
   const getActionDisplay = (action) => {
     const actionMap = {
-      'login': 'Login',
-      'logout': 'Logout',
-      'create': 'Criação',
-      'update': 'Atualização',
-      'delete': 'Exclusão',
-      'conversation_closed_agent': 'Conversa Encerrada por Agente',
-      'conversation_closed_ai': 'Conversa Encerrada por IA',
-      'conversation_transferred': 'Conversa Transferida',
-      'conversation_assigned': 'Conversa Atribuída'
+      'conversation_closed_agent': 'Agente',
+      'conversation_closed_ai': 'IA',
+      'conversation_transferred': 'Transferida',
+      'conversation_assigned': 'Atribuída'
     };
     return actionMap[action] || action;
+  };
+
+  const getActionBadge = (action) => {
+    const actionMap = {
+      'conversation_closed_agent': 'bg-green-100 text-green-800',
+      'conversation_closed_ai': 'bg-purple-100 text-purple-800',
+      'conversation_transferred': 'bg-blue-100 text-blue-800',
+      'conversation_assigned': 'bg-yellow-100 text-yellow-800'
+    };
+    return actionMap[action] || 'bg-gray-100 text-gray-800';
   };
 
   const handleFilterChange = (key, value) => {
@@ -163,8 +172,7 @@ export default function AuditLog() {
       action_type: '',
       date_from: '',
       date_to: '',
-      user_id: '',
-      provedor_id: ''
+      user_id: ''
     });
     setPagination(prev => ({ ...prev, current: 1 }));
   };
@@ -184,6 +192,16 @@ export default function AuditLog() {
     setConversationDetails(null);
   };
 
+  if (!provedorId) {
+    return (
+      <div className="flex-1 p-6 bg-background">
+        <div className="text-center text-muted-foreground">
+          ID do provedor não fornecido
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex-1 p-6 bg-background overflow-y-auto">
       <div className="max-w-7xl mx-auto">
@@ -194,7 +212,7 @@ export default function AuditLog() {
               <Eye className="w-7 h-7 text-muted-foreground" /> Auditoria do Sistema
             </h1>
             <p className="text-muted-foreground">
-              Veja todas as ações realizadas no sistema, incluindo login, logout, alterações e IPs.
+              Veja todas as conversas encerradas no sistema, incluindo quem as encerrou e detalhes.
             </p>
           </div>
           <div className="flex gap-2">
@@ -241,14 +259,14 @@ export default function AuditLog() {
             </div>
             <div className="bg-card p-4 rounded-lg border">
               <div className="flex items-center gap-2">
-                <BarChart3 className="w-5 h-5 text-blue-500" />
+                <Bot className="w-5 h-5 text-purple-500" />
                 <span className="text-sm text-muted-foreground">Por IA</span>
               </div>
               <p className="text-2xl font-bold">{stats.closed_by_ai || 0}</p>
             </div>
             <div className="bg-card p-4 rounded-lg border">
               <div className="flex items-center gap-2">
-                <Calendar className="w-5 h-5 text-purple-500" />
+                <Calendar className="w-5 h-5 text-green-500" />
                 <span className="text-sm text-muted-foreground">Taxa IA</span>
               </div>
               <p className="text-2xl font-bold">
@@ -271,13 +289,10 @@ export default function AuditLog() {
                   className="w-full p-2 border rounded-md bg-background"
                 >
                   <option value="">Todas as ações</option>
-                  <option value="login">Login</option>
-                  <option value="logout">Logout</option>
-                  <option value="create">Criação</option>
-                  <option value="update">Atualização</option>
-                  <option value="delete">Exclusão</option>
                   <option value="conversation_closed_agent">Conversa Encerrada por Agente</option>
                   <option value="conversation_closed_ai">Conversa Encerrada por IA</option>
+                  <option value="conversation_transferred">Conversa Transferida</option>
+                  <option value="conversation_assigned">Conversa Atribuída</option>
                 </select>
               </div>
               <div>
@@ -320,21 +335,22 @@ export default function AuditLog() {
                 <thead className="bg-muted">
                   <tr>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground">Ação</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground">Usuário</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground">Cliente</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground">Agente</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground">Data/Hora</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground">IP</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground">Plataforma</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground">Detalhes</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground">Conversa</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground">Duração</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
                   {logs.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="text-center py-12 text-muted-foreground">
+                      <td colSpan={8} className="text-center py-12 text-muted-foreground">
                         <Eye className="w-12 h-12 mx-auto mb-3 text-muted-foreground/50" />
-                        <p className="text-lg font-medium">Nenhum evento registrado ainda.</p>
-                        <p className="text-sm">Os logs de auditoria aparecerão aqui quando houver atividades no sistema.</p>
+                        <p className="text-lg font-medium">Nenhuma conversa encerrada ainda.</p>
+                        <p className="text-sm">As conversas encerradas aparecerão aqui quando houver atividades no sistema.</p>
                       </td>
                     </tr>
                   )}
@@ -342,11 +358,19 @@ export default function AuditLog() {
                     <tr key={log.id} className="hover:bg-muted/50 transition-colors">
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
-                          {getActionIcon(log.action)}
-                          <span className="text-sm font-medium">
+                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${getActionBadge(log.action)}`}>
                             {getActionDisplay(log.action)}
                           </span>
                         </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <button
+                          onClick={() => openConversationModal(log.conversation_id)}
+                          className="font-medium text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                          title="Clique para ver detalhes da conversa"
+                        >
+                          {log.contact_name || 'Cliente'}
+                        </button>
                       </td>
                       <td className="px-4 py-3">
                         <span className="font-medium">
@@ -357,24 +381,33 @@ export default function AuditLog() {
                         {new Date(log.timestamp).toLocaleString('pt-BR')}
                       </td>
                       <td className="px-4 py-3 text-sm text-muted-foreground">
-                        {log.ip_address || '-'}
+                        <div className="flex items-center gap-2">
+                          <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                          {log.channel_type || 'WhatsApp'}
+                        </div>
                       </td>
                       <td className="px-4 py-3 max-w-xs">
-                        <span className="text-sm">{log.details || '-'}</span>
-                      </td>
-                      <td className="px-4 py-3 text-sm text-muted-foreground">
-                        {log.conversation_id ? (
-                          <button
-                            onClick={() => openConversationModal(log.conversation_id)}
-                            className="text-blue-600 hover:text-blue-800 hover:underline flex items-center gap-1"
-                          >
-                            <Hash className="w-3 h-3" />
-                            #{log.conversation_id}
-                          </button>
-                        ) : '-'}
+                        <div className="text-sm space-y-1">
+                          <div>{log.message_count || 0} mensagens</div>
+                          {log.resolution_type && (
+                            <div className="text-xs text-muted-foreground">
+                              {log.resolution_type === 'ai_resolved' ? 'IA resolveu automaticamente' : log.resolution_type}
+                            </div>
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-sm text-muted-foreground">
                         {formatDuration(log.conversation_duration_formatted)}
+                      </td>
+                      <td className="px-4 py-3">
+                        <button
+                          onClick={() => openConversationModal(log.conversation_id)}
+                          className="flex items-center gap-2 px-3 py-1 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+                          title="Ver detalhes da conversa"
+                        >
+                          <Eye className="w-4 h-4" />
+                          Ver
+                        </button>
                       </td>
                     </tr>
                   ))}

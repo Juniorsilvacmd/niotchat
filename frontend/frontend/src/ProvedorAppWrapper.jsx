@@ -3,6 +3,7 @@ import { useParams, Routes, Route, Navigate, useLocation } from 'react-router-do
 import Sidebar from './components/Sidebar';
 import Topbar from './components/Topbar';
 import Dashboard from './components/Dashboard';
+import DashboardPrincipal from './components/DashboardPrincipal';
 import ConversasDashboard from './components/ConversasDashboard';
 import Contacts from './components/Contacts2';
 import ConversationList from './components/ConversationList';
@@ -87,7 +88,7 @@ export default function ProvedorAppWrapper(props) {
       <div className="flex-1 flex flex-col overflow-y-auto">
         <Topbar onLogout={handleLogout} onChangelog={handleChangelog} onNotifications={handleNotifications} onMenuClick={() => setSidebarOpen(true)} />
         <Routes>
-          <Route path="dashboard" element={<Dashboard provedorId={provedorId} />} />
+                      <Route path="dashboard" element={<DashboardPrincipal provedorId={provedorId} />} />
           <Route path="conversas" element={<ConversasDashboard provedorId={provedorId} />} />
           <Route path="conversas-dashboard" element={<ConversasDashboard provedorId={provedorId} />} />
           <Route path="contacts" element={<Contacts provedorId={provedorId} />} />
@@ -98,7 +99,7 @@ export default function ProvedorAppWrapper(props) {
               provedorId={provedorId}
             />
           } />
-          <Route path="reports" element={<Dashboard provedorId={provedorId} />} />
+          <Route path="reports" element={<DashboardPrincipal provedorId={provedorId} />} />
           <Route path="settings" element={<Settings provedorId={provedorId} />} />
           <Route path="users" element={<UserManagement provedorId={provedorId} />} />
           <Route path="equipes" element={<TeamsPage />} />

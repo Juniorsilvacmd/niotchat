@@ -194,7 +194,18 @@ CORS_ALLOWED_ORIGINS = []  # Não restringe, pois CORS_ALLOW_ALL_ORIGINS = True
 # Channels configuration
 CHANNEL_LAYERS = {
     'default': {
-        'BACKEND': 'channels.layers.InMemoryChannelLayer',
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            'hosts': [{
+                'host': '154.38.176.17',
+                'port': 6379,
+                'username': 'niochat',
+                'password': 'E0sJT3wAYFuahovmHkxgy',
+                'db': 0,
+            }],
+            'capacity': 1500,
+            'expiry': 10,
+        },
     },
 }
 
@@ -211,8 +222,28 @@ EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='')
 EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
 
 # Celery configuration
-CELERY_BROKER_URL = config('CELERY_BROKER_URL', default='redis://localhost:6379/0')
-CELERY_RESULT_BACKEND = config('CELERY_RESULT_BACKEND', default='redis://localhost:6379/0')
+CELERY_BROKER_URL = config('REDIS_URL', default='redis://niochat:E0sJT3wAYFuahovmHkxgy@154.38.176.17:6379/0')
+CELERY_RESULT_BACKEND = config('REDIS_URL', default='redis://niochat:E0sJT3wAYFuahovmHkxgy@154.38.176.17:6379/0')
+
+# Redis configuration for AI and memory
+REDIS_URL = config('REDIS_URL', default='redis://niochat:E0sJT3wAYFuahovmHkxgy@154.38.176.17:6379/0')
+REDIS_HOST = config('REDIS_HOST', default='154.38.176.17')
+REDIS_PORT = config('REDIS_PORT', default=6379, cast=int)
+REDIS_DB = config('REDIS_DB', default=0, cast=int)
+REDIS_USERNAME = config('REDIS_USERNAME', default='niochat')
+REDIS_PASSWORD = config('REDIS_PASSWORD', default='E0sJT3wAYFuahovmHkxgy')
+
+# Redis configuration for different purposes
+REDIS_AI_DB = config('REDIS_AI_DB', default=1, cast=int)
+REDIS_CONVERSATION_DB = config('REDIS_CONVERSATION_DB', default=2, cast=int)
+REDIS_CACHE_DB = config('REDIS_CACHE_DB', default=3, cast=int)
+
+# Redis connection settings
+REDIS_CONNECTION_POOL_SIZE = config('REDIS_CONNECTION_POOL_SIZE', default=20, cast=int)
+REDIS_SOCKET_TIMEOUT = config('REDIS_SOCKET_TIMEOUT', default=10, cast=int)
+REDIS_SOCKET_CONNECT_TIMEOUT = config('REDIS_SOCKET_CONNECT_TIMEOUT', default=10, cast=int)
+REDIS_RETRY_ON_TIMEOUT = config('REDIS_RETRY_ON_TIMEOUT', default=True, cast=bool)
+REDIS_HEALTH_CHECK_INTERVAL = config('REDIS_HEALTH_CHECK_INTERVAL', default=30, cast=int)
 
 # Custom user model
 AUTH_USER_MODEL = 'core.User'

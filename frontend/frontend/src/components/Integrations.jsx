@@ -258,39 +258,61 @@ export default function Integrations({ provedorId }) {
 
   useEffect(() => {
     if (!provedorId) return;
-    const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const wsHost = window.location.hostname;
-            const ws = new window.WebSocket(`ws://${wsHost}:8010/ws/painel/${provedorId}/`);
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'whatsapp_beta_status' && data.canal_id) {
-          setChannels(prevChannels => prevChannels.map(c => {
-            if (c.id === data.canal_id) {
-              return {
-                ...c,
-                state: data.status,
-                betaStatus: {
-                  ...c.betaStatus,
-                  status: data.status,
-                  instance: data.instance,
-                  connected: data.connected,
-                  loggedIn: data.loggedIn
-                }
-              };
-            }
-            return c;
-          }));
-          // Exibir alerta se desconectou
-          // if (data.status === 'disconnected') {
-          //   setWhatsappDisconnected(true); // Removido
-          //   setTimeout(() => setWhatsappDisconnected(false), 8000); // Removido
-          // }
+    
+    let ws = null;
+    
+    try {
+      const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+      ws = new window.WebSocket(`${wsProtocol}://${window.location.host}/ws/painel/${provedorId}/`);
+      
+      ws.onopen = () => {
+        console.log('# Debug logging removed for security WebSocket Integrations: Conectado com sucesso');
+      };
+      
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'whatsapp_beta_status' && data.canal_id) {
+            setChannels(prevChannels => prevChannels.map(c => {
+              if (c.id === data.canal_id) {
+                return {
+                  ...c,
+                  state: data.status,
+                  betaStatus: {
+                    ...c.betaStatus,
+                    status: data.status,
+                    instance: data.instance,
+                    connected: data.connected,
+                    loggedIn: data.loggedIn
+                  }
+                };
+              }
+              return c;
+            }));
+          }
+        } catch (e) { 
+          console.error('Erro ao processar mensagem WebSocket:', e);
         }
-      } catch (e) { /* ignore */ }
+      };
+      
+      ws.onclose = (event) => {
+        console.log('# Debug logging removed for security WebSocket Integrations: Desconectado', event.code, event.reason);
+      };
+      
+      ws.onerror = (error) => {
+        console.error('# Debug logging removed for security WebSocket Integrations: Erro', error);
+      };
+      
+    } catch (error) {
+      console.error('Erro ao criar WebSocket:', error);
+    }
+    
+    return () => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        console.log('# Debug logging removed for security WebSocket Integrations: Fechando conexão');
+        ws.close(1000, 'Component unmounting');
+      }
     };
-    ws.onclose = () => {};
-    return () => ws.close();
   }, [provedorId]);
 
   // Limpar polling quando componente for desmontado

@@ -1,0 +1,67 @@
+{% extends "admin/index.html" %}
+{% load i18n %}
+
+{% block content %}
+<div style="display: flex; gap: 20px;">
+    <!-- Menu lateral personalizado -->
+    <div style="flex: 0 0 300px; background: #2c3e50; padding: 20px; border-radius: 8px; height: fit-content;">
+        <h2 style="color: #ecf0f1; margin: 0 0 20px 0; font-size: 18px;">🛠️ Ferramentas Administrativas</h2>
+        
+        {% for item in menu_items %}
+        <div style="margin-bottom: 10px;">
+            <a href="{% url item.url %}" style="display: block; padding: 12px 15px; color: #bdc3c7; text-decoration: none; background: #34495e; border-radius: 5px; transition: all 0.3s; border-left: 3px solid transparent;">
+                <span style="margin-right: 10px;">{{ item.icon }}</span>
+                {{ item.label }}
+            </a>
+        </div>
+        {% endfor %}
+        
+        <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #34495e;">
+            <h3 style="color: #ecf0f1; margin: 0 0 15px 0; font-size: 16px;">📊 Estatísticas Rápidas</h3>
+            <div style="color: #bdc3c7; font-size: 14px;">
+                <p>• Total de Provedores: {{ app_list.0.model_count|default:"0" }}</p>
+                <p>• Total de Usuários: {{ app_list.1.model_count|default:"0" }}</p>
+                <p>• Total de Canais: {{ app_list.2.model_count|default:"0" }}</p>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Conteúdo original do admin -->
+    <div style="flex: 1;">
+        {{ block.super }}
+    </div>
+</div>
+{% endblock %} 
+{% load i18n %}
+
+{% block content %}
+<div style="display: flex; gap: 20px;">
+    <!-- Menu lateral personalizado -->
+    <div style="flex: 0 0 300px; background: #2c3e50; padding: 20px; border-radius: 8px; height: fit-content;">
+        <h2 style="color: #ecf0f1; margin: 0 0 20px 0; font-size: 18px;">🛠️ Ferramentas Administrativas</h2>
+        
+        {% for item in menu_items %}
+        <div style="margin-bottom: 10px;">
+            <a href="{% url item.url %}" style="display: block; padding: 12px 15px; color: #bdc3c7; text-decoration: none; background: #34495e; border-radius: 5px; transition: all 0.3s; border-left: 3px solid transparent;">
+                <span style="margin-right: 10px;">{{ item.icon }}</span>
+                {{ item.label }}
+            </a>
+        </div>
+        {% endfor %}
+        
+        <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #34495e;">
+            <h3 style="color: #ecf0f1; margin: 0 0 15px 0; font-size: 16px;">📊 Estatísticas Rápidas</h3>
+            <div style="color: #bdc3c7; font-size: 14px;">
+                <p>• Total de Provedores: {{ app_list.0.model_count|default:"0" }}</p>
+                <p>• Total de Usuários: {{ app_list.1.model_count|default:"0" }}</p>
+                <p>• Total de Canais: {{ app_list.2.model_count|default:"0" }}</p>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Conteúdo original do admin -->
+    <div style="flex: 1;">
+        {{ block.super }}
+    </div>
+</div>
+{% endblock %} 

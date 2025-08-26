@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Wifi, Search, Edit, Trash2, MoreVertical, Plus, Eye, Users, MessageCircle, TrendingUp } from 'lucide-react';
+import { Wifi, Search, Edit, Trash2, MoreVertical, Plus, Eye, Users, MessageCircle, TrendingUp, Database, Trash } from 'lucide-react';
 import axios from 'axios';
 import ReactDOM from 'react-dom';
 
@@ -37,6 +37,12 @@ export default function SuperadminProvedores() {
     totalUsuarios: 0,
     totalConversas: 0
   });
+  
+  // Estados para modais de limpeza
+  const [showLimpezaModal, setShowLimpezaModal] = useState(false);
+  const [provedorLimpeza, setProvedorLimpeza] = useState(null);
+  const [loadingLimpeza, setLoadingLimpeza] = useState(false);
+  const [limpezaResult, setLimpezaResult] = useState(null);
 
   const filteredProvedores = provedoresState.filter(p =>
     p.nome.toLowerCase().includes(search.toLowerCase()) ||
@@ -151,7 +157,35 @@ export default function SuperadminProvedores() {
 
   const handleEditProvedor = (provedor) => {
     // Redirecionar para a página de edição do provedor
-    window.location.href = `/app/accounts/${provedor.id}/settings`;
+    window.location.href = `/app/accounts/${provedor.id}/dados-provedor`;
+  };
+
+  const handleAlterarStatus = async (provedorId, novoStatus) => {
+    const statusLabels = {
+      'ativo': 'Ativo',
+      'suspenso': 'Suspenso'
+    };
+    
+    if (!window.confirm(`Tem certeza que deseja alterar o status para "${statusLabels[novoStatus]}"?`)) return;
+    
+    try {
+      const token = localStorage.getItem('token');
+      await axios.patch(`/api/provedores/${provedorId}/`, {
+        status: novoStatus
+      }, {
+        headers: { Authorization: `Token ${token}` }
+      });
+      
+      // Atualizar lista
+      setProvedoresState(prev => prev.map(p => 
+        p.id === provedorId ? { ...p, status: novoStatus } : p
+      ));
+      
+      alert(`Status alterado para "${statusLabels[novoStatus]}" com sucesso!`);
+      
+    } catch (err) {
+      alert('Erro ao alterar status do provedor!');
+    }
   };
 
   const handleDeleteProvedor = async (id) => {
@@ -175,6 +209,56 @@ export default function SuperadminProvedores() {
       alert('Erro ao excluir provedor!');
     }
   };
+  
+  // Função para abrir modal de limpeza
+  const handleOpenLimpezaModal = (provedor) => {
+    setProvedorLimpeza(provedor);
+    setShowLimpezaModal(true);
+    setMenuId(null); // Fechar menu de ações
+  };
+  
+  // Função para executar limpeza
+  const handleExecutarLimpeza = async (tipo) => {
+    if (!provedorLimpeza) return;
+    
+    const confirmacao = tipo === 'banco' 
+      ? `Tem certeza que deseja LIMPAR COMPLETAMENTE o banco de dados do provedor "${provedorLimpeza.nome}"?\n\n⚠️ ATENÇÃO: Esta ação removerá TODAS as conversas, mensagens e contatos deste provedor e NÃO PODE SER DESFEITA!`
+      : `Tem certeza que deseja limpar o Redis do provedor "${provedorLimpeza.nome}"?\n\n⚠️ ATENÇÃO: Esta ação removerá todas as chaves de cache e memória deste provedor!`;
+    
+    if (!window.confirm(confirmacao)) return;
+    
+    setLoadingLimpeza(true);
+    setLimpezaResult(null);
+    
+    try {
+      const token = localStorage.getItem('token');
+      const endpoint = tipo === 'banco' 
+        ? `/api/provedores/${provedorLimpeza.id}/limpar_banco_dados/`
+        : `/api/provedores/${provedorLimpeza.id}/limpar_redis/`;
+      
+      const response = await axios.post(endpoint, {}, {
+        headers: { Authorization: `Token ${token}` }
+      });
+      
+      setLimpezaResult({
+        success: true,
+        message: response.data.message,
+        details: response.data
+      });
+      
+      // Atualizar estatísticas após limpeza
+      fetchStats();
+      
+    } catch (error) {
+      setLimpezaResult({
+        success: false,
+        message: error.response?.data?.error || 'Erro ao executar limpeza',
+        details: error.response?.data
+      });
+    } finally {
+      setLoadingLimpeza(false);
+    }
+  };
 
   const handleClick = (e) => {
     if (menuId && !menuBtnRefs.current[menuId]?.contains(e.target)) {
@@ -191,9 +275,25 @@ export default function SuperadminProvedores() {
     e.stopPropagation();
     const button = e.currentTarget;
     const rect = button.getBoundingClientRect();
+    
+    // Calcular se o modal vai caber na tela
+    const modalHeight = 200; // Altura estimada do modal
+    const windowHeight = window.innerHeight;
+    const spaceBelow = windowHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    
+    let topPosition;
+    if (spaceBelow < modalHeight && spaceAbove > modalHeight) {
+      // Se não cabe embaixo, posiciona acima do botão
+      topPosition = rect.top + window.scrollY - modalHeight - 10;
+    } else {
+      // Posiciona abaixo, mas mais para cima
+      topPosition = rect.bottom + window.scrollY - 80;
+    }
+    
     setMenuPosition({
-      top: rect.bottom + window.scrollY,
-      left: rect.left + window.scrollX
+      top: topPosition,
+      left: rect.left + window.scrollX - 200 // Move 200px para a esquerda
     });
     setMenuId(provedorId === menuId ? null : provedorId);
   };
@@ -201,29 +301,43 @@ export default function SuperadminProvedores() {
   return (
     <div className="flex-1 p-6 bg-background overflow-y-auto">
       {/* Header */}
+      {/* Header elegante */}
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-foreground mb-2 flex items-center">
-          <Wifi className="w-8 h-8 mr-3" />
+        <h1 className="text-3xl font-bold text-foreground mb-2 flex items-center gap-3">
+          <Wifi className="w-8 h-8 text-primary" />
           Gerenciamento de Provedores
         </h1>
-        <p className="text-muted-foreground">Gerencie provedores de internet e seus dados</p>
+        <p className="text-muted-foreground">Gerencie provedores de internet e seus dados de forma centralizada</p>
       </div>
 
-      {/* Busca e botão adicionar */}
-      <div className="bg-card rounded-lg p-4 mb-4 flex items-center gap-4 shadow">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
-          <input
-            type="text"
-            placeholder="Buscar provedores..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            className="pl-10 pr-4 py-2 rounded bg-background border w-full"
-          />
+      {/* Cards de estatísticas removidos */}
+
+      {/* Busca e botão adicionar modernizado */}
+      <div className="bg-card rounded-xl shadow-lg border border-border overflow-hidden mb-6">
+        <div className="bg-gradient-to-r from-slate-900/20 to-gray-900/20 px-6 py-4 border-b border-border">
+          <h3 className="text-lg font-semibold text-foreground flex items-center gap-2">
+            <Search className="w-5 h-5 text-slate-400" />
+            Gerenciar Provedores
+          </h3>
         </div>
-        <button className="flex items-center gap-2 bg-primary text-white px-4 py-2 rounded font-medium text-sm" onClick={() => setShowAddModal(true)}>
-          <Plus className="w-4 h-4" /> Adicionar Provedor
-        </button>
+        <div className="p-6 flex items-center gap-4">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
+            <input
+              type="text"
+              placeholder="Buscar provedores por nome, slug ou domínio..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="w-full pl-10 pr-4 py-3 rounded-lg bg-background border border-border text-foreground focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors"
+            />
+          </div>
+          <button 
+            className="flex items-center gap-2 bg-primary hover:bg-primary/90 text-white px-6 py-3 rounded-lg font-medium transition-colors shadow-lg" 
+            onClick={() => setShowAddModal(true)}
+          >
+            <Plus className="w-4 h-4" /> Adicionar Provedor
+          </button>
+        </div>
       </div>
 
       {/* Modal de adicionar provedor */}
@@ -287,22 +401,35 @@ export default function SuperadminProvedores() {
         </div>
       )}
 
-      {/* Tabela de provedores */}
-      <div className="bg-card rounded-lg shadow overflow-x-auto">
-        <table className="min-w-full">
-          <thead className="bg-muted">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-semibold">PROVEDOR</th>
-              <th className="px-6 py-3 text-center text-xs font-semibold">CANAL</th>
-              <th className="px-6 py-3 text-center text-xs font-semibold">USUÁRIOS</th>
-              <th className="px-6 py-3 text-center text-xs font-semibold">CONVERSAS</th>
-              <th className="px-6 py-3 text-center text-xs font-semibold">STATUS</th>
-              <th className="px-6 py-3 text-center text-xs font-semibold">AÇÕES</th>
-            </tr>
-          </thead>
+      {/* Tabela de provedores modernizada */}
+      <div className="bg-card rounded-xl shadow-lg border border-border overflow-hidden">
+        <div className="bg-gradient-to-r from-slate-900/20 to-gray-900/20 px-6 py-4 border-b border-border">
+          <h3 className="text-lg font-semibold text-foreground flex items-center gap-2">
+            <Users className="w-5 h-5 text-slate-400" />
+            Lista de Provedores
+          </h3>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="min-w-full">
+            <thead className="bg-muted/50">
+              <tr>
+                <th className="px-6 py-4 text-center text-xs font-semibold text-foreground uppercase tracking-wider">ID</th>
+                <th className="px-6 py-4 text-left text-xs font-semibold text-foreground uppercase tracking-wider">PROVEDOR</th>
+                <th className="px-6 py-4 text-center text-xs font-semibold text-foreground uppercase tracking-wider">CANAL</th>
+                <th className="px-6 py-4 text-center text-xs font-semibold text-foreground uppercase tracking-wider">USUÁRIOS</th>
+                <th className="px-6 py-4 text-center text-xs font-semibold text-foreground uppercase tracking-wider">CONVERSAS</th>
+                <th className="px-6 py-4 text-center text-xs font-semibold text-foreground uppercase tracking-wider">STATUS</th>
+                <th className="px-6 py-4 text-center text-xs font-semibold text-foreground uppercase tracking-wider">AÇÕES</th>
+              </tr>
+            </thead>
           <tbody className="divide-y divide-border">
             {filteredProvedores.map(provedor => (
               <tr key={provedor.id} className="hover:bg-muted/50">
+                <td className="px-6 py-4 text-center align-middle">
+                  <span className="inline-flex items-center justify-center w-8 h-8 bg-blue-100 text-blue-800 rounded-full text-sm font-semibold">
+                    {provedor.id}
+                  </span>
+                </td>
                 <td className="px-6 py-4 min-w-[220px] align-middle">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-full bg-blue-900 flex items-center justify-center">
@@ -347,7 +474,7 @@ export default function SuperadminProvedores() {
                       }
                     }}
                   >
-                    {provedor.is_active !== false ? 'Ativo' : 'Inativo'}
+                    {provedor.status === 'ativo' ? 'Ativo' : 'Suspenso'}
                   </button>
                 </td>
                 <td className="px-6 py-4 text-center align-middle relative" style={{overflow: 'visible'}}>
@@ -359,25 +486,112 @@ export default function SuperadminProvedores() {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
 
       {/* Menu de ações */}
       {menuId && menuBtnRefs.current[menuId] && ReactDOM.createPortal(
         <div
-          className="bg-card border rounded shadow z-[9999] min-w-[140px] flex flex-col w-max fixed"
+          className="bg-card border rounded shadow z-[9999] min-w-[170px] flex flex-col w-max fixed"
           style={{ top: menuPosition.top, left: menuPosition.left }}
         >
-          <button className="flex items-center gap-2 w-full px-4 py-2 text-left hover:bg-muted" onClick={e => { e.stopPropagation(); handleEditProvedor(filteredProvedores.find(p => p.id === menuId)); setMenuId(null); }}>
+          <button className="flex items-center gap-2 w-full px-3 py-1.5 text-left hover:bg-muted text-sm" onClick={e => { e.stopPropagation(); handleEditProvedor(filteredProvedores.find(p => p.id === menuId)); setMenuId(null); }}>
             <Eye className="w-4 h-4" /> Ver Detalhes
           </button>
-          <button className="flex items-center gap-2 w-full px-4 py-2 text-left hover:bg-muted" onClick={e => { e.stopPropagation(); handleEditProvedor(filteredProvedores.find(p => p.id === menuId)); setMenuId(null); }}>
+          <button className="flex items-center gap-2 w-full px-3 py-1.5 text-left hover:bg-muted text-sm" onClick={e => { e.stopPropagation(); handleEditProvedor(filteredProvedores.find(p => p.id === menuId)); setMenuId(null); }}>
             <Edit className="w-4 h-4" /> Editar
           </button>
-          <button className="flex items-center gap-2 w-full px-4 py-2 text-left text-red-600 hover:bg-muted" onClick={e => { e.stopPropagation(); handleDeleteProvedor(menuId); setMenuId(null); }}>
+          <div className="border-t border-border my-1"></div>
+          <button className="flex items-center gap-2 w-full px-3 py-1.5 text-left text-orange-600 hover:bg-muted text-sm" onClick={e => { e.stopPropagation(); handleOpenLimpezaModal(filteredProvedores.find(p => p.id === menuId)); setMenuId(null); }}>
+            <Database className="w-4 h-4" /> Limpeza de Dados
+          </button>
+          <button className="flex items-center gap-2 w-full px-3 py-1.5 text-left text-red-600 hover:bg-muted text-sm" onClick={e => { e.stopPropagation(); handleDeleteProvedor(menuId); setMenuId(null); }}>
             <Trash2 className="w-4 h-4" /> Excluir
           </button>
         </div>,
         document.body
+      )}
+      
+      {/* Modal de Limpeza de Dados */}
+      {showLimpezaModal && provedorLimpeza && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-[#23272f] rounded-xl shadow-2xl p-8 w-full max-w-lg relative border border-border">
+            <button className="absolute top-2 right-2 text-gray-400 hover:text-white text-2xl" onClick={() => { setShowLimpezaModal(false); setProvedorLimpeza(null); setLimpezaResult(null); }}>&times;</button>
+            
+            <h2 className="text-2xl font-bold mb-6 text-white flex items-center gap-3">
+              <Database className="w-6 h-6 text-orange-500" />
+              Limpeza de Dados - {provedorLimpeza.nome}
+            </h2>
+            
+            <div className="space-y-6">
+              <div className="bg-orange-900/20 border border-orange-500/30 rounded-lg p-4">
+                <p className="text-orange-200 text-sm">
+                  ⚠️ <strong>ATENÇÃO:</strong> As ações de limpeza são irreversíveis e podem afetar o funcionamento do sistema.
+                </p>
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Limpeza do Banco de Dados */}
+                <div className="bg-red-900/20 border border-red-500/30 rounded-lg p-4">
+                  <h3 className="font-semibold text-red-200 mb-2 flex items-center gap-2">
+                    <Database className="w-4 h-4" />
+                    Banco de Dados
+                  </h3>
+                  <p className="text-red-300 text-xs mb-3">
+                    Remove TODAS as conversas, mensagens e contatos deste provedor
+                  </p>
+                  <button
+                    onClick={() => handleExecutarLimpeza('banco')}
+                    disabled={loadingLimpeza}
+                    className="w-full bg-red-600 hover:bg-red-700 text-white py-2 px-4 rounded text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {loadingLimpeza ? 'Executando...' : 'Limpar Banco de Dados'}
+                  </button>
+                </div>
+                
+                {/* Limpeza do Redis */}
+                <div className="bg-yellow-900/20 border border-yellow-500/30 rounded-lg p-4">
+                  <h3 className="font-semibold text-yellow-200 mb-2 flex items-center gap-2">
+                    <Trash className="w-4 h-4" />
+                    Cache Redis
+                  </h3>
+                  <p className="text-yellow-300 text-xs mb-3">
+                    Remove todas as chaves de cache e memória deste provedor
+                  </p>
+                  <button
+                    onClick={() => handleExecutarLimpeza('redis')}
+                    disabled={loadingLimpeza}
+                    className="w-full bg-yellow-600 hover:bg-yellow-700 text-white py-2 px-4 rounded text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {loadingLimpeza ? 'Executando...' : 'Limpar Redis'}
+                  </button>
+                </div>
+              </div>
+              
+              {/* Resultado da operação */}
+              {limpezaResult && (
+                <div className={`rounded-lg p-4 border ${
+                  limpezaResult.success 
+                    ? 'bg-green-900/20 border-green-500/30 text-green-200' 
+                    : 'bg-red-900/20 border-red-500/30 text-red-200'
+                }`}>
+                  <h4 className="font-semibold mb-2">
+                    {limpezaResult.success ? '✅ Sucesso!' : '❌ Erro!'}
+                  </h4>
+                  <p className="text-sm">{limpezaResult.message}</p>
+                  {limpezaResult.details && (
+                    <details className="mt-2">
+                      <summary className="cursor-pointer text-xs opacity-70">Ver detalhes</summary>
+                      <pre className="text-xs mt-2 opacity-70 overflow-auto">
+                        {JSON.stringify(limpezaResult.details, null, 2)}
+                      </pre>
+                    </details>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

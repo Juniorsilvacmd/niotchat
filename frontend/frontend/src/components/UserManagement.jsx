@@ -94,8 +94,8 @@ const fetchUsers = async (token) => {
   return usersList;
 };
 
-const UserManagement = () => {
-  console.log('UserManagement: Componente montado');
+const UserManagement = ({ provedorId }) => {
+  console.log('UserManagement: Componente montado, provedorId:', provedorId);
   
   const [searchTerm, setSearchTerm] = useState('');
   const [filterRole, setFilterRole] = useState('all');
@@ -113,7 +113,7 @@ const UserManagement = () => {
     email: '',
     new_password: '',
     user_type: 'agent',
-    provedor_id: '',
+    provedor_id: provedorId || '', // Usar o provedorId atual automaticamente
     is_active: true,
     permissions: [],
   };
@@ -171,6 +171,17 @@ const UserManagement = () => {
     fetchAllUsers();
     fetchProvedores();
   }, []);
+
+  // Atualizar automaticamente o provedor_id quando o provedorId mudar
+  useEffect(() => {
+    if (provedorId) {
+      setAddUserForm(prev => ({
+        ...prev,
+        provedor_id: provedorId
+      }));
+      console.log('Provedor ID atualizado automaticamente:', provedorId);
+    }
+  }, [provedorId]);
 
   const getRoleIcon = (role) => {
     switch (role) {
@@ -370,24 +381,24 @@ const UserManagement = () => {
     setShowAddModal(true);
     
     // SEMPRE forçar carregamento dos provedores quando abrir o modal
-    console.log('🔍 Modal aberto - forçando carregamento de provedores...');
+    console.log('# Debug logging removed for security Modal aberto - forçando carregamento de provedores...');
     try {
       const token = localStorage.getItem('token');
-      console.log('🔑 Token encontrado:', token ? 'SIM' : 'NÃO');
+      console.log('# Debug logging removed for security Token encontrado:', token ? 'SIM' : 'NÃO');
       
       if (token) {
-        console.log('🚀 Fazendo chamada para API...');
+        console.log('# Debug logging removed for security Fazendo chamada para API...');
         const response = await axios.get('/api/provedores/', {
           headers: { Authorization: `Token ${token}` }
         });
         const provedoresData = response.data.results || response.data;
-        console.log('✅ Provedores carregados no modal:', provedoresData);
+        console.log('# Debug logging removed for security Provedores carregados no modal:', provedoresData);
         setProvedores(provedoresData);
       } else {
-        console.error('❌ Token não encontrado!');
+        console.error('# Debug logging removed for security Token não encontrado!');
       }
     } catch (error) {
-      console.error('❌ Erro ao carregar provedores no modal:', error);
+      console.error('# Debug logging removed for security Erro ao carregar provedores no modal:', error);
       // Fallback: criar provedor padrão
       setProvedores([{ id: 1, nome: 'MEGA FIBRA (Fallback)' }]);
     }
@@ -431,7 +442,7 @@ const UserManagement = () => {
         </div>
 
         {/* Statistics - agora em cima */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-6">
           <div className="niochat-card p-6">
             <div className="flex items-center">
               <div className="p-3 rounded-lg bg-blue-500/20">
@@ -472,19 +483,6 @@ const UserManagement = () => {
             </div>
           </div>
 
-          <div className="niochat-card p-6">
-            <div className="flex items-center">
-              <div className="p-3 rounded-lg bg-green-500/20">
-                <Users className="w-6 h-6 text-green-500" />
-              </div>
-              <div className="ml-4">
-                <p className="text-sm font-medium text-muted-foreground">Usuários Ativos</p>
-                <p className="text-2xl font-bold text-card-foreground">
-                  {usersState.filter(u => u.is_active).length}
-                </p>
-              </div>
-            </div>
-          </div>
         </div>
 
         {/* Filters and Actions */}
@@ -626,7 +624,7 @@ const UserManagement = () => {
                               className="w-full text-left px-4 py-2 hover:bg-muted text-sm flex items-center gap-2"
                               onClick={() => handleResetPassword(user)}
                             >
-                              <span className="inline-block w-4 h-4">🔑</span> Redefinir senha
+                              <span className="inline-block w-4 h-4"># Debug logging removed for security</span> Redefinir senha
                             </button>
                             <button
                               className="w-full text-left px-4 py-2 hover:bg-muted text-sm flex items-center gap-2"
@@ -775,31 +773,10 @@ const UserManagement = () => {
                     {userRole === 'superadmin' && <option value="superadmin">Super Admin</option>}
                   </select>
                 </div>
-                                 <div>
-                   <label className="block text-gray-200 text-sm font-bold mb-2">Empresa</label>
-                   {/* Debug: mostrar estado dos provedores */}
-                   <div className="text-xs text-gray-400 mb-1">
-                     Debug: {provedores.length} provedores carregados
-                   </div>
-                   <select
-                     name="provedor_id"
-                     className="w-full px-4 py-2 rounded bg-background text-white border border-border"
-                     value={addUserForm.provedor_id}
-                     onChange={handleAddUserChange}
-                     required
-                   >
-                     <option value="">Selecione...</option>
-                     {provedores.map(provedor => (
-                       <option key={provedor.id} value={provedor.id}>
-                         {provedor.nome}
-                       </option>
-                     ))}
-                     {/* Debug: mostrar quantos provedores foram carregados */}
-                     {provedores.length === 0 && (
-                       <option disabled>Carregando provedores...</option>
-                     )}
-                   </select>
-                 </div>
+                
+                {/* Campo hidden para enviar o provedor_id automaticamente */}
+                <input type="hidden" name="provedor_id" value={provedorId} />
+                
                 <div>
                   <label className="block text-gray-200 text-sm font-bold mb-2">Permissões</label>
                   <div className="flex flex-col gap-2">

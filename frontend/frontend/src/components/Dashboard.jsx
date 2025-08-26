@@ -36,19 +36,25 @@ const Dashboard = ({ provedorId }) => {
 
   useEffect(() => {
     async function fetchDashboardData() {
-      setLoading(true);
-      setError('');
       try {
+        setLoading(true);
         const token = localStorage.getItem('token');
-        const res = await axios.get('/api/dashboard/stats/', {
-          headers: { Authorization: `Token ${token}` }
+        const response = await fetch(`/api/dashboard/stats/`, {
+          headers: {
+            'Authorization': `Token ${token}`,
+            'Content-Type': 'application/json'
+          }
         });
         
-        const data = res.data;
-        setStats(data.stats);
-        setCanais(data.canais);
-        setAtendentes(data.atendentes);
-        setAtividades(data.atividades);
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        setStats(data.stats || {});
+        setCanais(data.canais || []);
+        setAtendentes(data.atendentes || []);
+        setAtividades(data.atividades || []);
       } catch (err) {
         console.error('Erro ao carregar dados do dashboard:', err);
         setError('Erro ao carregar dados do dashboard');
@@ -60,101 +66,141 @@ const Dashboard = ({ provedorId }) => {
     fetchDashboardData();
 
     // WebSocket para atualizações em tempo real dos gráficos SSE/Uazapi
-    const wsHost = window.location.hostname;
-    const ws = new WebSocket(`ws://${wsHost}:8010/ws/painel/${provedorId}/`);
+    let ws = null;
+    
+    if (provedorId) {
+      const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+      ws = new WebSocket(`${wsProtocol}://${window.location.host}/ws/painel/${provedorId}/`);
+      
+      ws.onopen = () => {
+        console.log('# Debug logging removed for security WebSocket Dashboard: Conectado com sucesso');
+      };
+      
       ws.onmessage = (event) => {
+        try {
           const data = JSON.parse(event.data);
-      // Mensagens por dia
-      if (data.type === 'graficos.mensagens') {
-        setStats(prev => ({
-          ...prev,
-          mensagens_30_dias: data.total
-        }));
-      }
-      // Atendimentos ativos
-      if (data.type === 'graficos.atendimentos') {
-        setStats(prev => ({
-          ...prev,
-          conversas_em_andamento: data.total
-        }));
-      }
-      // Mídias recebidas
-      if (data.type === 'graficos.midia') {
-        setStats(prev => ({
-          ...prev,
-          midias_30_dias: data.total
-        }));
-      }
-      // Autoatendimentos (IA)
-      if (data.type === 'graficos.autoatendimento') {
-        setStats(prev => ({
-          ...prev,
-          autoatendimentos_30_dias: data.total
-        }));
+          
+          // Mensagens por dia
+          if (data.type === 'graficos.mensagens') {
+            setStats(prev => ({
+              ...prev,
+              mensagens_30_dias: data.total
+            }));
           }
-      // Status de presença
-      if (data.type === 'graficos.presenca') {
-        setStats(prev => ({
-          ...prev,
-          status_presenca: data.status
-        }));
+          // Atendimentos ativos
+          if (data.type === 'graficos.atendimentos') {
+            setStats(prev => ({
+              ...prev,
+              conversas_em_andamento: data.total
+            }));
+          }
+          // Mídias recebidas
+          if (data.type === 'graficos.midia') {
+            setStats(prev => ({
+              ...prev,
+              midias_30_dias: data.total
+            }));
+          }
+          // Autoatendimentos (IA)
+          if (data.type === 'graficos.autoatendimento') {
+            setStats(prev => ({
+              ...prev,
+              autoatendimentos_30_dias: data.total
+            }));
+          }
+          // Status de presença
+          if (data.type === 'graficos.presenca') {
+            setStats(prev => ({
+              ...prev,
+              status_presenca: data.status
+            }));
+          }
+        } catch (err) {
+          console.error('Erro ao processar mensagem WebSocket:', err);
         }
       };
-    ws.onerror = (err) => {
-      console.error('WebSocket erro:', err);
+      
+      ws.onerror = (err) => {
+        console.error('WebSocket erro:', err);
       };
-    return () => ws.close();
+      
+      ws.onclose = (event) => {
+        console.log('# Debug logging removed for security WebSocket Dashboard: Desconectado', event.code, event.reason);
+      };
+    }
+
+    return () => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        console.log('# Debug logging removed for security WebSocket Dashboard: Fechando conexão');
+        ws.close(1000, 'Component unmounting');
+      }
+    };
   }, [provedorId]);
 
   // Dados para gráficos baseados nos dados reais
   const conversationStatusData = [
-    { name: 'Abertas', value: stats.conversas_abertas, color: '#10b981' },
-    { name: 'Pendentes', value: stats.conversas_pendentes, color: '#f59e0b' },
-    { name: 'Resolvidas', value: stats.conversas_resolvidas, color: '#6b7280' }
-  ];
+    { name: 'Abertas', value: stats?.conversas_abertas || 0, color: '#10b981' },
+    { name: 'Pendentes', value: stats?.conversas_pendentes || 0, color: '#f59e0b' },
+    { name: 'Resolvidas', value: stats?.conversas_resolvidas || 0, color: '#6b7280' }
+  ].filter(item => item.value > 0); // Filtrar apenas itens com valor > 0
 
-  const channelData = canais.map(canal => ({
-    name: canal.inbox__channel_type || 'Outros',
-    value: canal.total,
-    color: getChannelColor(canal.inbox__channel_type)
-  }));
+  // Função para traduzir tipos de canal
+  const translateChannelType = (channelType) => {
+    const translations = {
+      'whatsapp': 'WhatsApp',
+      'email': 'Email',
+      'telegram': 'Telegram',
+      'webchat': 'Chat Web',
+      'facebook': 'Facebook',
+      'instagram': 'Instagram'
+    };
+    return translations[channelType] || channelType || 'Outros';
+  };
 
-  const agentPerformanceData = atendentes.map(atendente => ({
-    name: atendente.name,
-    conversations: atendente.conversations,
-    satisfaction: atendente.satisfaction
+  const channelData = (canais || [])
+    .filter(canal => canal.total > 0) // Filtrar apenas canais com conversas
+    .map(canal => ({
+      name: translateChannelType(canal.inbox__channel_type),
+      value: canal.total || 0,
+      color: getChannelColor(canal.inbox__channel_type)
+    }));
+
+  const agentPerformanceData = (atendentes || []).map(atendente => ({
+    name: atendente.name || 'Sem nome',
+    conversations: atendente.conversations || 0,
+    satisfaction: atendente.satisfaction || 0
   }));
 
   const statsCards = [
     {
       title: 'Conversas em Andamento',
-      value: stats.conversas_em_andamento.toLocaleString(),
-      change: stats.conversas_em_andamento > 0 ? '+5%' : '0%',
-      trend: stats.conversas_em_andamento > 0 ? 'up' : 'neutral',
+      value: (stats?.conversas_em_andamento || 0).toLocaleString(),
+      change: (stats?.conversas_em_andamento || 0) > 0 ? '+5%' : '0%',
+      trend: (stats?.conversas_em_andamento || 0) > 0 ? 'up' : 'neutral',
       icon: MessageCircle,
       color: 'text-blue-500'
     },
     {
       title: 'Tempo de Primeira Resposta',
-      value: stats.tempo_primeira_resposta,
-      change: stats.tempo_primeira_resposta !== '0min' ? '-20%' : '0%',
-      trend: stats.tempo_primeira_resposta !== '0min' ? 'down' : 'neutral',
+      value: stats?.tempo_primeira_resposta || '0min',
+      change: (stats?.tempo_primeira_resposta || '0min') !== '0min' ? '-20%' : '0%',
+      trend: (stats?.tempo_primeira_resposta || '0min') !== '0min' ? 'down' : 'neutral',
       icon: Clock,
       color: 'text-green-500'
     },
     {
       title: 'Satisfação Média',
-      value: stats.satisfacao_media,
-      change: parseFloat(stats.satisfacao_media) > 0 ? '+2%' : '0%',
-      trend: parseFloat(stats.satisfacao_media) > 0 ? 'up' : 'neutral',
+      value: stats?.satisfacao_media || '0',
+      change: parseFloat(stats?.satisfacao_media || '0') > 0 ? '+2%' : '0%',
+      trend: parseFloat(stats?.satisfacao_media || '0') > 0 ? 'up' : 'neutral',
       icon: CheckCircle,
       color: 'text-purple-500'
     },
     {
       title: 'Taxa de Resolução',
-      value: stats.taxa_resolucao,
-      change: stats.taxa_resolucao !== '0%' ? '+3%' : '0%',
-      trend: stats.taxa_resolucao !== '0%' ? 'up' : 'neutral',
+      value: stats?.taxa_resolucao || '0%',
+      change: (stats?.taxa_resolucao || '0%') !== '0%' ? '+3%' : '0%',
+      trend: (stats?.taxa_resolucao || '0%') !== '0%' ? 'up' : 'neutral',
       icon: TrendingUp,
       color: 'text-orange-500'
     }
@@ -172,9 +218,11 @@ const Dashboard = ({ provedorId }) => {
 
   const CustomTooltip = ({ active, payload, label }) => {
     if (active && payload && payload.length) {
+      const data = payload[0].payload;
+      const displayLabel = data?.name || label || 'Item';
       return (
         <div className="bg-card border border-border rounded-lg p-3 shadow-lg">
-          <p className="text-card-foreground font-medium">{`${label}: ${payload[0].value}`}</p>
+          <p className="text-card-foreground font-medium">{`${displayLabel}: ${payload[0].value}`}</p>
         </div>
       );
     }

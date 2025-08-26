@@ -2,8 +2,10 @@ from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.contrib.auth import authenticate, login, logout
-from .models import User, Label, SystemConfig, Provedor, Canal, Company, CompanyUser
-from .serializers import UserSerializer, LabelSerializer, SystemConfigSerializer, ProvedorSerializer, AuditLogSerializer, CanalSerializer, CompanySerializer, CompanyUserSerializer, CompanyUserCreateSerializer
+from django.contrib.auth.signals import user_logged_in
+from django.db.models import Q
+from .models import User, Label, SystemConfig, Provedor, Canal, Company, CompanyUser, MensagemSistema
+from .serializers import UserSerializer, LabelSerializer, SystemConfigSerializer, ProvedorSerializer, AuditLogSerializer, CanalSerializer, CompanySerializer, CompanyUserSerializer, CompanyUserCreateSerializer, MensagemSistemaSerializer
 from rest_framework.authtoken.models import Token
 from rest_framework.views import APIView
 from django.views.decorators.csrf import csrf_exempt
@@ -11,12 +13,12 @@ from django.utils.decorators import method_decorator
 import logging
 from . import models
 from .sgp_client import SGPClient
-from .openai_service import openai_service
+# # from .openai_service import openai_service
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework import mixins
 import requests
 import json
-from .telegram_service import telegram_service
+# from .telegram_service import telegram_service
 import asyncio
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
@@ -56,7 +58,10 @@ class UserViewSet(viewsets.ModelViewSet):
                     if provedores.exists():
                         provedor = provedores.first()
                         usuarios_admins = provedor.admins.all()
-                        usuarios_atendentes = models.User.objects.filter(user_type='agent', provedores_admin=provedor)
+                        usuarios_atendentes = models.User.objects.filter(
+                            Q(user_type='agent', provedores_admin=provedor) | 
+                            Q(user_type='agent', provedor=provedor)
+                        )
                         return (usuarios_admins | usuarios_atendentes).exclude(id=user.id).distinct()
                     return models.User.objects.none()
                 else:
@@ -65,7 +70,10 @@ class UserViewSet(viewsets.ModelViewSet):
                     if provedores.exists():
                         provedor = provedores.first()
                         usuarios_admins = provedor.admins.all()
-                        usuarios_atendentes = models.User.objects.filter(user_type='agent', provedores_admin=provedor)
+                        usuarios_atendentes = models.User.objects.filter(
+                            Q(user_type='agent', provedores_admin=provedor) | 
+                            Q(user_type='agent', provedor=provedor)
+                        )
                         return (usuarios_admins | usuarios_atendentes).exclude(id=user.id).distinct()
                     return models.User.objects.none()
             else:
@@ -74,7 +82,10 @@ class UserViewSet(viewsets.ModelViewSet):
                     # Verificar se o usuário tem permissão para ver usuários deste provedor
                     if user.user_type == 'superadmin' or provedor in Provedor.objects.filter(admins=user):
                         usuarios_admins = provedor.admins.all()
-                        usuarios_atendentes = models.User.objects.filter(user_type='agent', provedores_admin=provedor)
+                        usuarios_atendentes = models.User.objects.filter(
+                            Q(user_type='agent', provedores_admin=provedor) | 
+                            Q(user_type='agent', provedor=provedor)
+                        )
                         return (usuarios_admins | usuarios_atendentes).distinct()
                     else:
                         return models.User.objects.none()
@@ -87,12 +98,22 @@ class UserViewSet(viewsets.ModelViewSet):
         elif user.user_type == 'admin':
             # Admins veem apenas usuários do seu provedor
             provedores = Provedor.objects.filter(admins=user)
+            print(f"[DEBUG UserViewSet] Usuário {user.username} é admin")
+            print(f"[DEBUG UserViewSet] Provedores encontrados: {[p.nome for p in provedores]}")
             if provedores.exists():
                 provedor = provedores.first()
+                print(f"[DEBUG UserViewSet] Provedor selecionado: {provedor.nome}")
                 # Admins e atendentes do provedor
                 usuarios_admins = provedor.admins.all()
-                usuarios_atendentes = models.User.objects.filter(user_type='agent', provedores_admin=provedor)
-                return (usuarios_admins | usuarios_atendentes).distinct()
+                print(f"[DEBUG UserViewSet] Admins do provedor: {[u.username for u in usuarios_admins]}")
+                usuarios_atendentes = models.User.objects.filter(
+                    Q(user_type='agent', provedores_admin=provedor) | 
+                    Q(user_type='agent', provedor=provedor)
+                )
+                print(f"[DEBUG UserViewSet] Atendentes do provedor: {[u.username for u in usuarios_atendentes]}")
+                resultado = (usuarios_admins | usuarios_atendentes).distinct()
+                print(f"[DEBUG UserViewSet] Total de usuários retornados: {resultado.count()}")
+                return resultado
             return models.User.objects.none()
         else:
             # Atendentes veem apenas a si mesmos
@@ -163,7 +184,10 @@ class UserViewSet(viewsets.ModelViewSet):
             if provedores.exists():
                 provedor = provedores.first()
                 usuarios_admins = provedor.admins.all()
-                usuarios_atendentes = models.User.objects.filter(user_type='agent', provedores_admin=provedor)
+                usuarios_atendentes = models.User.objects.filter(
+                    Q(user_type='agent', provedores_admin=provedor) | 
+                    Q(user_type='agent', provedor=provedor)
+                )
                 users = (usuarios_admins | usuarios_atendentes).distinct()
             else:
                 users = models.User.objects.none()
@@ -204,6 +228,14 @@ class LabelViewSet(viewsets.ModelViewSet):
         else:
             serializer.save()
 
+
+class IsSuperAdmin(permissions.BasePermission):
+    def has_permission(self, request, view):
+        return request.user.is_authenticated and getattr(request.user, 'user_type', None) == 'superadmin'
+
+class IsCompanyAdminOrSuperAdmin(permissions.BasePermission):
+    def has_permission(self, request, view):
+        return request.user.is_authenticated and (getattr(request.user, 'user_type', None) in ['superadmin', 'admin'])
 
 class ProvedorViewSet(viewsets.ModelViewSet):
     queryset = Provedor.objects.all()
@@ -267,14 +299,132 @@ class ProvedorViewSet(viewsets.ModelViewSet):
             
             return super().retrieve(request, *args, **kwargs)
 
-
-class IsSuperAdmin(permissions.BasePermission):
-    def has_permission(self, request, view):
-        return request.user.is_authenticated and getattr(request.user, 'user_type', None) == 'superadmin'
-
-class IsCompanyAdminOrSuperAdmin(permissions.BasePermission):
-    def has_permission(self, request, view):
-        return request.user.is_authenticated and (getattr(request.user, 'user_type', None) in ['superadmin', 'admin'])
+    @action(detail=True, methods=['post'], permission_classes=[IsSuperAdmin])
+    def limpar_banco_dados(self, request, pk=None):
+        """Limpa todos os dados do banco de dados de um provedor específico"""
+        try:
+            provedor = self.get_object()
+            
+            # Verificar se o usuário é superadmin
+            if request.user.user_type != 'superadmin':
+                return Response({'error': 'Apenas superadmins podem executar esta ação'}, status=status.HTTP_403_FORBIDDEN)
+            
+            # Importar modelos necessários
+            from conversations.models import Conversation, Message, Contact
+            from django.db import transaction
+            
+            with transaction.atomic():
+                # Contar registros antes da limpeza
+                conversas_count = Conversation.objects.filter(inbox__provedor=provedor).count()
+                mensagens_count = Message.objects.filter(conversation__inbox__provedor=provedor).count()
+                contatos_count = Contact.objects.filter(provedor=provedor).count()
+                
+                # Limpar dados
+                Message.objects.filter(conversation__inbox__provedor=provedor).delete()
+                Conversation.objects.filter(inbox__provedor=provedor).delete()
+                Contact.objects.filter(provedor=provedor).delete()
+                
+                # Log da ação
+                from .models import AuditLog
+                AuditLog.objects.create(
+                    user=request.user,
+                    action='other',
+                    provedor=provedor,
+                    details=f'Banco de dados limpo para provedor {provedor.nome}. Removidos: {conversas_count} conversas, {mensagens_count} mensagens, {contatos_count} contatos'
+                )
+                
+                return Response({
+                    'success': True,
+                    'message': f'Banco de dados limpo com sucesso para o provedor {provedor.nome}',
+                    'removidos': {
+                        'conversas': conversas_count,
+                        'mensagens': mensagens_count,
+                        'contatos': contatos_count
+                    }
+                }, status=status.HTTP_200_OK)
+                
+        except Exception as e:
+            return Response({
+                'error': f'Erro ao limpar banco de dados: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['post'], permission_classes=[IsSuperAdmin])
+    def limpar_redis(self, request, pk=None):
+        """Limpa todas as chaves Redis de um provedor específico"""
+        try:
+            provedor = self.get_object()
+            
+            # Verificar se o usuário é superadmin
+            if request.user.user_type != 'superadmin':
+                return Response({'error': 'Apenas superadmins podem executar esta ação'}, status=status.HTTP_403_FORBIDDEN)
+            
+            # Importar serviço Redis
+            from .redis_memory_service import redis_memory_service
+            
+            # Conectar ao Redis
+            redis_client = redis_memory_service.get_redis_sync()
+            if not redis_client:
+                return Response({'error': 'Não foi possível conectar ao Redis'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+            # Buscar e remover chaves relacionadas ao provedor
+            chaves_removidas = 0
+            
+            # Padrões de chaves para buscar - APENAS do provedor específico
+            padroes = [
+                f'conversation:{provedor.id}:*',           # Conversas do provedor
+                f'asgi:group:painel_{provedor.id}',       # Grupo WebSocket do painel
+                f'graficos:{provedor.id}:*',              # Gráficos do provedor
+                f'sse:{provedor.id}:*'                    # SSE do provedor
+            ]
+            
+            # Buscar conversas específicas do provedor para limpar grupos ASGI
+            from conversations.models import Conversation
+            conversas_provedor = Conversation.objects.filter(
+                inbox__provedor=provedor
+            ).values_list('id', flat=True)
+            
+            # Adicionar grupos ASGI específicos das conversas do provedor
+            for conversa_id in conversas_provedor:
+                padroes.append(f'asgi:group:conversation_{conversa_id}')
+                padroes.append(f'asgi:group:private_chat_{conversa_id}')
+            
+            # Limpar chaves específicas do provedor
+            for padrao in padroes:
+                chaves = redis_client.keys(padrao)
+                if chaves:
+                    redis_client.delete(*chaves)
+                    chaves_removidas += len(chaves)
+                    print(f"🔧 Padrão '{padrao}': {len(chaves)} chaves removidas")
+            
+            # Log da ação
+            from .models import AuditLog
+            AuditLog.objects.create(
+                user=request.user,
+                action='other',
+                provedor=provedor,
+                details=f'Redis limpo para provedor {provedor.nome}. Removidas {chaves_removidas} chaves'
+            )
+            
+            # Log detalhado para debug
+            print(f"🔧 LIMPEZA REDIS - Provedor: {provedor.nome} (ID: {provedor.id})")
+            print(f"🔧 Chaves removidas: {chaves_removidas}")
+            print(f"🔧 Padrões utilizados: {padroes}")
+            print(f"🔧 Conversas do provedor: {list(conversas_provedor)}")
+            
+            # Verificar chaves restantes para debug
+            chaves_restantes = redis_client.keys('asgi:group:*')
+            print(f"🔧 Chaves ASGI restantes após limpeza: {chaves_restantes}")
+            
+            return Response({
+                'success': True,
+                'message': f'Redis limpo com sucesso para o provedor {provedor.nome}',
+                'chaves_removidas': chaves_removidas
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response({
+                'error': f'Erro ao limpar Redis: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class CanalViewSet(viewsets.ModelViewSet):
     queryset = Canal.objects.all()
@@ -284,9 +434,14 @@ class CanalViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         print(f"get_queryset - Usuário: {user.username}, user_type: {user.user_type}")
-        print(f"get_queryset - hasattr(user, 'provedor_id'): {hasattr(user, 'provedor_id')}")
-        print(f"get_queryset - user.provedor_id: {getattr(user, 'provedor_id', None)}")
         
+        # Superadmin vê todos os canais
+        if user.user_type == 'superadmin':
+            canais = Canal.objects.all()
+            print(f"get_queryset - Superadmin vê {canais.count()} canais")
+            return canais
+        
+        # Usuários admin e agent só veem canais dos seus provedores
         if hasattr(user, 'provedor_id') and user.provedor_id:
             canais = Canal.objects.filter(provedor_id=user.provedor_id)
             print(f"get_queryset - Canais encontrados por provedor_id: {canais.count()}")
@@ -1056,7 +1211,7 @@ class CanalViewSet(viewsets.ModelViewSet):
             print(f"[DEBUG] Provedor: {provedor.nome}")
             print(f"[DEBUG] Integrações: {integracoes}")
             print(f"[DEBUG] Uazapi URL: {uazapi_url}")
-            print(f"[DEBUG] Uazapi Token: {uazapi_token[:10] if uazapi_token else 'None'}...")
+            # Sensitive data log removed for security
             
             if not uazapi_url or not uazapi_token:
                 return Response({
@@ -1265,8 +1420,9 @@ class SystemConfigViewSet(viewsets.ViewSet):
             serializer.save()
             # Se a chave da OpenAI foi atualizada, recarregar o serviço
             if 'openai_api_key' in request.data:
-                from .openai_service import openai_service
-                openai_service.update_api_key()
+                pass
+                # from .openai_service import openai_service
+                # openai_service.update_api_key()
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1281,8 +1437,9 @@ class SystemConfigViewSet(viewsets.ViewSet):
             serializer.save()
             # Se a chave da OpenAI foi atualizada, recarregar o serviço
             if 'openai_api_key' in request.data:
-                from .openai_service import openai_service
-                openai_service.update_api_key()
+                pass
+                # from .openai_service import openai_service
+                # openai_service.update_api_key()
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1299,8 +1456,8 @@ class SystemConfigViewSet(viewsets.ViewSet):
             config.save()
             
             # Recarregar o serviço da OpenAI
-            from .openai_service import openai_service
-            openai_service.update_api_key()
+            # from .openai_service import openai_service
+            # openai_service.update_api_key()
             
             return Response({
                 'success': True,
@@ -1339,17 +1496,27 @@ class CustomAuthToken(APIView):
             if not user.is_active:
                 logger.warning(f"Usuário {username} encontrado, mas inativo.")
                 return Response({'non_field_errors': ['Usuário inativo.']}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Verificar se o provedor do usuário está suspenso
+            if user.provedor and user.provedor.status == 'suspenso':
+                logger.warning(f"Usuário {username} tentou fazer login, mas o provedor {user.provedor.nome} está suspenso.")
+                return Response({'non_field_errors': ['Seu provedor está temporariamente suspenso. Entre em contato com o suporte.']}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Verificar se o usuário é admin de um provedor suspenso
+            if user.user_type == 'admin':
+                provedores_admin = Provedor.objects.filter(admins=user)
+                for provedor in provedores_admin:
+                    if provedor.status == 'suspenso':
+                        logger.warning(f"Admin {username} tentou fazer login, mas o provedor {provedor.nome} está suspenso.")
+                        return Response({'non_field_errors': ['Seu provedor está temporariamente suspenso. Entre em contato com o suporte.']}, status=status.HTTP_400_BAD_REQUEST)
+            
             # Atualiza o campo last_login
             user.last_login = timezone.now()
             user.save(update_fields=['last_login'])
-            # Registra evento de login na auditoria
-            ip = request.META.get('REMOTE_ADDR')
-            AuditLog.objects.create(
-                user=user,
-                action='login',
-                ip_address=ip,
-                details='Login no sistema'
-            )
+            
+            # Disparar signal de login para criar log de auditoria
+            user_logged_in.send(sender=user.__class__, request=request, user=user)
+            
             token, created = Token.objects.get_or_create(user=user)
             logger.info(f"Login bem-sucedido para usuário: {username}")
             return Response({'token': token.key}, status=status.HTTP_200_OK)
@@ -1593,6 +1760,7 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
         """Auditoria completa de conversas para o dono do provedor"""
         user = request.user
         provedor_id = request.query_params.get('provedor_id')
+        conversation_id = request.query_params.get('conversation_id')
         
         # Verificar se o usuário é dono do provedor
         if user.user_type != 'superadmin':
@@ -1608,55 +1776,110 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
         from django.db.models import Q, Count, Avg
         from django.utils import timezone
         
-        # Construir queryset base
-        if provedor_id:
-            provedor_filter = Q(inbox__provedor_id=provedor_id)
-        else:
-            if user.user_type == 'superadmin':
-                provedor_filter = Q()
+        try:
+            # Buscar conversa específica se conversation_id for fornecido
+            if conversation_id:
+                conversa = Conversation.objects.select_related(
+                    'contact', 'inbox', 'assigned_agent'
+                ).prefetch_related('messages').get(id=conversation_id)
+                
+                # Verificar se a conversa pertence ao provedor correto
+                if provedor_id and conversa.inbox.provedor_id != int(provedor_id):
+                    return Response({'error': 'Conversa não pertence a este provedor'}, status=403)
+                
+                # Preparar dados da conversa
+                conversation_data = {
+                    'id': conversa.id,
+                    'status': conversa.status,
+                    'status_display': conversa.get_status_display(),
+                    'created_at': conversa.created_at,
+                    'updated_at': conversa.updated_at,
+                    'duration': str(timezone.now() - conversa.created_at).split('.')[0] if conversa.created_at else 'N/A',
+                    'message_count': conversa.messages.count(),
+                    'contact': {
+                        'name': conversa.contact.name,
+                        'phone': conversa.contact.phone,
+                        'email': conversa.contact.email
+                    },
+                    'messages': [
+                        {
+                            'content': msg.content,
+                            'is_from_customer': msg.is_from_customer,
+                            'created_at': msg.created_at,
+                            'message_type': msg.message_type
+                        }
+                        for msg in conversa.messages.all().order_by('created_at')
+                    ],
+                    'audit_logs': []
+                }
+                
+                # Buscar logs de auditoria relacionados
+                audit_logs = AuditLog.objects.filter(
+                    conversation_id=conversation_id,
+                    provedor_id=provedor_id
+                ).order_by('-timestamp')
+                
+                conversation_data['audit_logs'] = [
+                    {
+                        'action': log.action,
+                        'action_display': log.get_action_display(),
+                        'user': log.user.username if log.user else 'Sistema',
+                        'timestamp': log.timestamp,
+                        'resolution_type': log.resolution_type
+                    }
+                    for log in audit_logs
+                ]
+                
+                return Response([conversation_data])
+            
+            # Se não forneceu conversation_id, buscar todas as conversas do provedor
             else:
-                provedor_filter = Q(inbox__provedor__in=provedores)
-        
-        # Filtros adicionais
-        status_filter = request.query_params.get('status')
-        if status_filter:
-            provedor_filter &= Q(status=status_filter)
-        
-        date_from = request.query_params.get('date_from')
-        if date_from:
-            provedor_filter &= Q(created_at__date__gte=date_from)
-        
-        date_to = request.query_params.get('date_to')
-        if date_to:
-            provedor_filter &= Q(created_at__date__lte=date_to)
-        
-        agent_id = request.query_params.get('agent_id')
-        if agent_id:
-            provedor_filter &= Q(assigned_agent_id=agent_id)
-        
-        conversation_id = request.query_params.get('conversation_id')
-        if conversation_id:
-            provedor_filter &= Q(id=conversation_id)
-        
-        # Buscar conversas
-        conversas = Conversation.objects.filter(provedor_filter).select_related(
-            'contact', 'inbox', 'assigned_agent'
-        ).prefetch_related('messages').order_by('-updated_at')
-        
-        # Paginação
-        page = self.paginate_queryset(conversas)
-        if page is not None:
-            from .serializers import ConversationAuditSerializer
-            serializer = ConversationAuditSerializer(page, many=True, context={'request': request})
-            # Definir o modelo dinamicamente
-            serializer.Meta.model = Conversation
-            return self.get_paginated_response(serializer.data)
-        
-        from .serializers import ConversationAuditSerializer
-        serializer = ConversationAuditSerializer(conversas, many=True, context={'request': request})
-        # Definir o modelo dinamicamente
-        serializer.Meta.model = Conversation
-        return Response(serializer.data)
+                # Construir queryset base
+                if provedor_id:
+                    provedor_filter = Q(inbox__provedor_id=provedor_id)
+                else:
+                    if user.user_type == 'superadmin':
+                        provedor_filter = Q()
+                    else:
+                        provedor_filter = Q(inbox__provedor__in=provedores)
+                
+                # Filtros adicionais
+                status_filter = request.query_params.get('status')
+                if status_filter:
+                    provedor_filter &= Q(status=status_filter)
+                
+                date_from = request.query_params.get('date_from')
+                if date_from:
+                    provedor_filter &= Q(created_at__date__gte=date_from)
+                
+                date_to = request.query_params.get('date_to')
+                if date_to:
+                    provedor_filter &= Q(created_at__date__lte=date_to)
+                
+                agent_id = request.query_params.get('agent_id')
+                if agent_id:
+                    provedor_filter &= Q(assigned_agent_id=agent_id)
+                
+                # Buscar conversas
+                conversas = Conversation.objects.filter(provedor_filter).select_related(
+                    'contact', 'inbox', 'assigned_agent'
+                ).prefetch_related('messages').order_by('-updated_at')
+                
+                # Paginação
+                page = self.paginate_queryset(conversas)
+                if page is not None:
+                    from .serializers import ConversationAuditSerializer
+                    serializer = ConversationAuditSerializer(page, many=True, context={'request': request})
+                    return self.get_paginated_response(serializer.data)
+                
+                from .serializers import ConversationAuditSerializer
+                serializer = ConversationAuditSerializer(conversas, many=True, context={'request': request})
+                return Response(serializer.data)
+                
+        except Conversation.DoesNotExist:
+            return Response({'error': 'Conversa não encontrada'}, status=404)
+        except Exception as e:
+            return Response({'error': f'Erro interno: {str(e)}'}, status=500)
     
     @action(detail=False, methods=['get'])
     def conversation_stats(self, request):
@@ -2131,23 +2354,56 @@ class DashboardStatsView(APIView):
                 })
         
         return Response({
-            'stats': {
-                'total_conversas': total_conversas,
-                'conversas_abertas': conversas_abertas,
-                'conversas_pendentes': conversas_pendentes,
-                'conversas_resolvidas': conversas_resolvidas,
-                'conversas_em_andamento': conversas_em_andamento,
-                'contatos_unicos': contatos_unicos,
-                'mensagens_30_dias': mensagens_30_dias,
-                'tempo_medio_resposta': tempo_medio_resposta,
-                'tempo_primeira_resposta': tempo_primeira_resposta,
-                'taxa_resolucao': taxa_resolucao,
-                'satisfacao_media': satisfacao_media
-            },
+            'total_conversas': total_conversas,
+            'conversas_abertas': conversas_abertas,
+            'conversas_pendentes': conversas_pendentes,
+            'conversas_resolvidas': conversas_resolvidas,
+            'conversas_em_andamento': conversas_em_andamento,
+            'contatos_unicos': contatos_unicos,
+            'mensagens_30_dias': mensagens_30_dias,
+            'tempo_medio_resposta': tempo_medio_resposta,
+            'tempo_primeira_resposta': tempo_primeira_resposta,
+            'taxa_resolucao': taxa_resolucao,
+            'satisfacao_media': satisfacao_media,
             'canais': canais_stats,
             'atendentes': atendentes_stats,
             'atividades': atividades_recentes
         })
+
+
+class DashboardResponseTimeHourlyView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        user = request.user
+        provedor_id = getattr(user, 'provedor_id', None)
+        
+        # Se não tem provedor_id direto, buscar pelo relacionamento
+        if not provedor_id:
+            provedor = Provedor.objects.filter(admins=user).first()
+            if provedor:
+                provedor_id = provedor.id
+        
+        if not provedor_id:
+            return Response({'error': 'Provedor não encontrado'}, status=400)
+        
+        # Dados simulados de tempo de resposta por hora (pode ser implementado com dados reais)
+        response_time_data = [
+            { 'time': '00:00', 'avg': 2.3, 'max': 8.5 },
+            { 'time': '02:00', 'avg': 1.8, 'max': 6.2 },
+            { 'time': '04:00', 'avg': 1.5, 'max': 4.1 },
+            { 'time': '06:00', 'avg': 2.1, 'max': 7.3 },
+            { 'time': '08:00', 'avg': 3.2, 'max': 12.1 },
+            { 'time': '10:00', 'avg': 4.1, 'max': 15.8 },
+            { 'time': '12:00', 'avg': 5.2, 'max': 18.3 },
+            { 'time': '14:00', 'avg': 4.8, 'max': 16.7 },
+            { 'time': '16:00', 'avg': 3.9, 'max': 14.2 },
+            { 'time': '18:00', 'avg': 3.1, 'max': 11.5 },
+            { 'time': '20:00', 'avg': 2.6, 'max': 9.1 },
+            { 'time': '22:00', 'avg': 2.0, 'max': 7.8 }
+        ]
+        
+        return Response(response_time_data)
 
 
 class LogoutView(APIView):
@@ -2445,6 +2701,87 @@ def health_check(request):
         "service": "Nio Chat Django Backend",
         "port": 8010
     })
+
+
+class MensagemSistemaViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para mensagens do sistema.
+    - Superadmins: Veem todas as mensagens
+    - Admins de provedores: Veem mensagens destinadas aos seus provedores
+    - Agentes/Atendentes: NÃO veem notificações
+    """
+    queryset = MensagemSistema.objects.all()
+    serializer_class = MensagemSistemaSerializer
+    permission_classes = [IsCompanyAdminOrSuperAdmin]
+    
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_superuser:
+            return MensagemSistema.objects.all()
+        elif hasattr(user, 'provedores_admin') and user.provedores_admin.exists():
+            # Usuário é admin de um ou mais provedores
+            provedor_ids = list(user.provedores_admin.values_list('id', flat=True))
+            # Filtrar mensagens que contêm qualquer um dos IDs dos provedores
+            mensagens = []
+            for mensagem in MensagemSistema.objects.all():
+                if any(provedor_id in mensagem.provedores for provedor_id in provedor_ids):
+                    mensagens.append(mensagem.id)
+            return MensagemSistema.objects.filter(id__in=mensagens)
+        # AGENTES/ATENDENTES NÃO VEEM NOTIFICAÇÕES
+        return MensagemSistema.objects.none()
+    
+    @action(detail=True, methods=['patch'], permission_classes=[IsCompanyAdminOrSuperAdmin], url_path='marcar-visualizada')
+    def marcar_visualizada(self, request, pk=None):
+        """Marca mensagem como visualizada pelo usuário atual"""
+        mensagem = self.get_object()
+        user_id = request.user.id
+        
+        # Verifica se o usuário tem acesso à mensagem
+        if not request.user.is_superuser:
+            # Verificar se é admin de provedores
+            if hasattr(request.user, 'provedores_admin') and request.user.provedores_admin.exists():
+                provedor_ids = list(request.user.provedores_admin.values_list('id', flat=True))
+                if not any(provedor_id in mensagem.provedores for provedor_id in provedor_ids):
+                    return Response({'error': 'Acesso negado'}, status=403)
+            else:
+                return Response({'error': 'Acesso negado'}, status=403)
+        
+        mensagem.marcar_visualizada(user_id)
+        return Response({'success': True, 'visualizacoes_count': mensagem.visualizacoes_count})
+    
+    @action(detail=False, methods=['get'], permission_classes=[IsCompanyAdminOrSuperAdmin])
+    def minhas_mensagens(self, request):
+        """Retorna mensagens destinadas ao usuário atual"""
+        user = request.user
+        print(f"[DEBUG MensagemSistemaViewSet] minhas_mensagens - Usuário: {user.username}, user_type: {getattr(user, 'user_type', 'N/A')}")
+        print(f"[DEBUG MensagemSistemaViewSet] minhas_mensagens - Tem provedor direto: {hasattr(user, 'provedor') and user.provedor}")
+        print(f"[DEBUG MensagemSistemaViewSet] minhas_mensagens - É admin de provedores: {hasattr(user, 'provedores_admin') and user.provedores_admin.exists()}")
+        
+        if hasattr(user, 'provedores_admin') and user.provedores_admin.exists():
+            provedor = user.provedores_admin.first()
+            print(f"[DEBUG MensagemSistemaViewSet] minhas_mensagens - Admin do provedor: {provedor.nome} (ID: {provedor.id})")
+        
+        if user.is_superuser:
+            queryset = MensagemSistema.objects.all()
+            print(f"[DEBUG MensagemSistemaViewSet] minhas_mensagens - Superadmin, total mensagens: {queryset.count()}")
+        elif hasattr(user, 'provedores_admin') and user.provedores_admin.exists():
+            # Usuário é admin de um ou mais provedores
+            provedor_ids = list(user.provedores_admin.values_list('id', flat=True))
+            # Filtrar mensagens que contêm qualquer um dos IDs dos provedores
+            mensagens = []
+            for mensagem in MensagemSistema.objects.all():
+                if any(provedor_id in mensagem.provedores for provedor_id in provedor_ids):
+                    mensagens.append(mensagem.id)
+            queryset = MensagemSistema.objects.filter(id__in=mensagens)
+            print(f"[DEBUG MensagemSistemaViewSet] minhas_mensagens - Admin provedor, mensagens encontradas: {queryset.count()}")
+            print(f"[DEBUG MensagemSistemaViewSet] minhas_mensagens - IDs das mensagens: {list(queryset.values_list('id', flat=True))}")
+        else:
+            # AGENTES/ATENDENTES NÃO VEEM NOTIFICAÇÕES
+            queryset = MensagemSistema.objects.none()
+            print(f"[DEBUG MensagemSistemaViewSet] minhas_mensagens - Usuário sem acesso (agente/atendente)")
+        
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
 
 
 

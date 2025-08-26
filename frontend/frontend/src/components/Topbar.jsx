@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { ClipboardList, Bell, LogOut, Sun, Moon, Menu } from 'lucide-react';
+import { ClipboardList, LogOut, Sun, Moon, Menu, MessageCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import InternalChatButton from './InternalChatButton';
+import NotificationBell from './NotificationBell';
 
 export default function Topbar({ onLogout, onChangelog, onNotifications, onMenuClick }) {
   const navigate = useNavigate();
@@ -46,6 +48,10 @@ export default function Topbar({ onLogout, onChangelog, onNotifications, onMenuC
       >
         {theme === 'dark' ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
       </button>
+      
+      {/* Botão do Chat Interno */}
+      <InternalChatButton />
+      
       <button
         className="p-2 rounded-lg transition-colors text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
         title="Changelog"
@@ -53,13 +59,8 @@ export default function Topbar({ onLogout, onChangelog, onNotifications, onMenuC
       >
         <ClipboardList className="w-5 h-5" />
       </button>
-      <button
-        className="p-2 rounded-lg transition-colors text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-        title="Notificações"
-        onClick={onNotifications}
-      >
-        <Bell className="w-5 h-5" />
-      </button>
+      {/* Sistema de Notificações do Superadmin */}
+      <NotificationBell />
       <button
         className="p-2 rounded-lg transition-colors text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
         title="Sair"

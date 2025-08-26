@@ -26,6 +26,30 @@ import CustomAudioPlayer from './ui/CustomAudioPlayer';
 
 const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) => {
   const navigate = useNavigate();
+  
+  // Verificação de segurança para evitar erros
+  if (!conversation) {
+    return (
+      <div className="flex-1 flex items-center justify-center bg-background">
+        <div className="text-center text-muted-foreground">
+          <h3 className="text-lg font-medium mb-2">Nenhuma conversa selecionada</h3>
+          <p>Selecione uma conversa da lista para começar</p>
+        </div>
+      </div>
+    );
+  }
+  
+  if (!conversation.contact) {
+    return (
+      <div className="flex-1 flex items-center justify-center bg-background">
+        <div className="text-center text-muted-foreground">
+          <h3 className="text-lg font-medium mb-2">Conversa inválida</h3>
+          <p>Esta conversa não possui informações de contato válidas</p>
+        </div>
+      </div>
+    );
+  }
+  
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -66,6 +90,9 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
   const [audioProgress, setAudioProgress] = useState({});
   const audioRefs = useRef({});
 
+  // # Debug logging removed for security ESTADO PARA CONTROLE DE MENSAGENS PENDENTES
+  const [pendingMessages, setPendingMessages] = useState(new Set());
+
   // Função para processar conteúdo da mensagem (parsear JSON se necessário)
   const processMessageContent = (content, isFromCustomer = false) => {
     if (!content || typeof content !== 'string') {
@@ -97,6 +124,51 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
     return content;
   };
 
+  // # Debug logging removed for security FUNÇÃO PARA LIMPAR MENSAGENS DUPLICADAS
+  const cleanDuplicateMessages = (messages) => {
+    const uniqueMessages = [];
+    const seenIds = new Set();
+    
+    messages.forEach(msg => {
+      // # Debug logging removed for security CORRIGIDO: Permitir TODAS as mensagens com ID válido
+      if (msg.id && !seenIds.has(msg.id)) {
+        seenIds.add(msg.id);
+        uniqueMessages.push(msg);
+      } 
+      // # Debug logging removed for security CORRIGIDO: Permitir mensagens temporárias SEM ID apenas
+      else if (!msg.id && (msg.isTemporary || msg.is_sending)) {
+        // Verificar duplicatas por conteúdo e timestamp apenas para temporárias
+        const isDuplicate = uniqueMessages.some(existingMsg => {
+          if (!existingMsg.isTemporary && !existingMsg.is_sending) return false;
+          const timeDiff = Math.abs(new Date(existingMsg.created_at) - new Date(msg.created_at));
+          return existingMsg.content === msg.content && 
+                 existingMsg.is_from_customer === msg.is_from_customer &&
+                 timeDiff < 1000; // 1 segundo de tolerância
+        });
+        
+        if (!isDuplicate) {
+          uniqueMessages.push(msg);
+        }
+      }
+      // # Debug logging removed for security NOVO: Fallback para mensagens sem ID que não são temporárias (casos raros)
+      else if (!msg.id && !msg.isTemporary && !msg.is_sending) {
+        // Verificar se já existe uma mensagem igual por conteúdo e timestamp
+        const isDuplicate = uniqueMessages.some(existingMsg => {
+          const timeDiff = Math.abs(new Date(existingMsg.created_at) - new Date(msg.created_at));
+          return existingMsg.content === msg.content && 
+                 existingMsg.is_from_customer === msg.is_from_customer &&
+                 timeDiff < 2000; // 2 segundos de tolerância para mensagens sem ID
+        });
+        
+        if (!isDuplicate) {
+          uniqueMessages.push(msg);
+        }
+      }
+    });
+    
+    return uniqueMessages.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+  };
+
   // Função para renderizar ícone do canal
   const getChannelIcon = (channelType) => {
     switch (channelType) {
@@ -115,41 +187,49 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
     }
   };
 
-  // Buscar mensagens ao abrir conversa
-  useEffect(() => {
+  // Função para buscar mensagens
+  const fetchMessages = async () => {
     if (!conversation) return;
     setLoading(true);
     setError('');
     const token = localStorage.getItem('token');
-    axios.get(`/api/messages/?conversation=${conversation.id}`, {
-      headers: { Authorization: `Token ${token}` }
-    })
-      .then(res => {
-        const messages = res.data.results || res.data;
+    try {
+      // Buscar TODAS as mensagens da conversa (sem limite)
+      const res = await axios.get(`/api/messages/?conversation=${conversation.id}&page_size=5000&ordering=created_at`, {
+        headers: { Authorization: `Token ${token}` }
+      });
+      
+      const messages = res.data.results || res.data;
+      // Processar todas as mensagens sem filtros desnecessários
+      const processedMessages = messages.map(msg => {
+        let processedContent = processMessageContent(msg.content, msg.is_from_customer);
         
-                    // Filtrar assinatura do agente das mensagens carregadas e parsear JSON
-            const filteredMessages = messages.map(msg => {
-              let processedContent = processMessageContent(msg.content, msg.is_from_customer);
-              
-              // Remover assinatura do agente se presente
-              if (processedContent && processedContent.match(/\*.*disse:\*\n/) && !msg.is_from_customer) {
-                processedContent = processedContent.replace(/\*.*disse:\*\n/, '');
-              }
-              
-
-              
-              return {
-                ...msg,
-                content: processedContent
-              };
-            });
+        // # Debug logging removed for security Remover assinatura do agente se presente
+        if (processedContent && processedContent.match(/\*.*disse:\*\n/) && !msg.is_from_customer) {
+          processedContent = processedContent.replace(/\*.*disse:\*\n/, '');
+        }
         
+        return {
+          ...msg,
+          content: processedContent
+        };
+      });
+      
+      // Debug removido - funcionando corretamente
+      
+      setMessages(processedMessages);
+    } catch (err) {
+      setError('Erro ao carregar mensagens.');
+      console.error('Erro ao buscar mensagens:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-        setMessages(filteredMessages);
-      })
-      .catch(() => setError('Erro ao carregar mensagens.'))
-      .finally(() => setLoading(false));
-  }, [conversation]);
+  // Buscar mensagens ao abrir conversa
+  useEffect(() => {
+    fetchMessages();
+  }, [conversation?.id]);
 
   // Fechar dropdown quando clicar fora
   useEffect(() => {
@@ -202,141 +282,156 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
     };
   }, [showTransferDropdown, agents]);
 
-  // WebSocket para mensagens em tempo real
+  // # Debug logging removed for security WebSocket CORRIGIDO - Melhor controle de duplicatas
   useEffect(() => {
     if (!conversation) return;
 
     const connectWebSocket = () => {
       const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-      // Usar a porta do backend (8010) em vez da porta do frontend
-      const wsUrl = `${wsProtocol}://172.21.31.23:8010/ws/conversations/${conversation.id}/`;
-      console.log('🔌 Conectando WebSocket:', wsUrl);
+      const wsUrl = `${wsProtocol}://${window.location.host}/ws/conversations/${conversation.id}/`;
+      console.log('# Debug logging removed for security ChatArea conectando WebSocket:', wsUrl);
       const ws = new window.WebSocket(wsUrl);
       wsRef.current = ws;
       
       ws.onopen = () => {
-        console.log('✅ WebSocket conectado para conversa:', conversation.id);
-        console.log('✅ WebSocket URL:', wsUrl);
-        // Reset retry count on successful connection
-        if (wsRef.current.retryCount) {
-          wsRef.current.retryCount = 0;
-        }
-        
-        // Start heartbeat
-        wsRef.current.heartbeatInterval = setInterval(() => {
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'ping' }));
-          }
-        }, 30000); // Send ping every 30 seconds
+        console.log('# Debug logging removed for security ChatArea WebSocket conectado');
       };
       
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          console.log('📨 WebSocket mensagem recebida:', data);
+          console.log('📨 ChatArea WebSocket recebeu:', data);
           
-          if (data.type === 'message' && data.message) {
-            console.log('➕ Verificando mensagem:', data.message);
+          if (data.type === 'message' || data.type === 'chat_message' || data.type === 'message_created') {
+            if (data.message) {
+              setMessages(currentMessages => {
+                // # Debug logging removed for security Verificação mais robusta de duplicatas
+                const messageExists = currentMessages.some(m => m.id === data.message.id);
+                
+                if (!messageExists) {
+                  let processedContent = processMessageContent(data.message.content, data.message.is_from_customer);
+                  
+                  // # Debug logging removed for security Remover assinatura do agente se presente (WebSocket)
+                  if (processedContent && processedContent.match(/\*.*disse:\*\n/) && !data.message.is_from_customer) {
+                    processedContent = processedContent.replace(/\*.*disse:\*\n/, '');
+                  }
+                  
+                  const processedMessage = {
+                    ...data.message,
+                    content: processedContent
+                  };
+                  
+                  // # Debug logging removed for security Remover das mensagens pendentes se existir
+                  setPendingMessages(prev => {
+                    const newSet = new Set(prev);
+                    // Remover a mensagem original (sem assinatura) das pendentes
+                    const originalContent = processedMessage.content.replace(/\*.*disse:\*\n/, '');
+                    newSet.delete(originalContent);
+                    return newSet;
+                  });
+                  
+                  // # Debug logging removed for security Remover mensagens temporárias relacionadas
+                  const filteredMessages = currentMessages.filter(m => {
+                    // Remover mensagens temporárias com conteúdo similar
+                    if (m.isTemporary || m.is_sending) {
+                      const originalContent = processedMessage.content.replace(/\*.*disse:\*\n/, '');
+                      return !(m.content === originalContent && 
+                              m.is_from_customer === processedMessage.is_from_customer);
+                    }
+                    return true;
+                  });
+                  
+                  return [...filteredMessages, processedMessage].sort((a, b) => 
+                    new Date(a.created_at) - new Date(b.created_at)
+                  );
+                }
+                return currentMessages;
+              });
+            }
+          }
+          
+          if (data.type === 'conversation_updated') {
+            console.log('# Debug logging removed for security Conversa atualizada via WebSocket');
+            if (onConversationUpdate) {
+              onConversationUpdate(data.conversation || conversation);
+            }
+          }
+          
+          // Listener para eventos de encerramento de conversa
+          if (data.type === 'conversation_event') {
+            console.log('📨 ChatArea recebeu evento de conversa:', data);
             
-            // Processar conteúdo da mensagem (parsear JSON se necessário)
-            let processedMessage = { ...data.message };
-            processedMessage.content = processMessageContent(processedMessage.content, processedMessage.is_from_customer);
-            
-            // Verificar se a mensagem contém assinatura do agente (formato "*Nome disse:*")
-            const hasAgentSignature = processedMessage.content && 
-              processedMessage.content.match(/\*.*disse:\*\n/);
-            
-            // Se tem assinatura do agente, não adicionar ao frontend
-            if (hasAgentSignature) {
-              console.log('➖ Mensagem com assinatura do agente, ignorando:', processedMessage.content);
-              return;
+            if (data.event_type === 'conversation_closed' || data.event_type === 'conversation_ended') {
+              console.log('🔒 Conversa encerrada via WebSocket');
+              
+              // Atualizar estado da conversa
+              if (onConversationUpdate) {
+                onConversationUpdate({
+                  ...conversation,
+                  status: 'closed',
+                  closed_at: data.timestamp
+                });
+              }
+              
+              // Notificar usuário
+              if (onConversationClose) {
+                onConversationClose();
+              }
+              
+              // Limpar mensagens e estado
+              setMessages([]);
+              setMessage('');
+              setLoading(false);
+              setError('');
             }
             
-            // Verificar se a mensagem já existe para evitar duplicatas ou atualizar se necessário
-            setMessages(prev => {
-              const messageIndex = prev.findIndex(msg => msg.id === processedMessage.id);
-              if (messageIndex !== -1) {
-                // Atualizar mensagem existente (pode ter additional_attributes atualizados)
-                console.log('🔄 Atualizando mensagem existente:', processedMessage.id);
-                const updatedMessages = [...prev];
-                updatedMessages[messageIndex] = processedMessage;
-                return updatedMessages;
-              }
-              console.log('➕ Adicionando nova mensagem:', processedMessage);
-              return [...prev, processedMessage];
-            });
-          } else if (data.type === 'ai_message' && data.message) {
-            console.log('➕ Adicionando mensagem da IA:', data.message);
+                      // Listener para atribuição de conversa
+          if (data.event_type === 'conversation_assigned') {
+            console.log('👤 Conversa atribuída via WebSocket');
             
-            // Processar conteúdo da mensagem da IA (parsear JSON se necessário)
-            let processedMessage = { ...data.message };
-            processedMessage.content = processMessageContent(processedMessage.content, false);
-            
-            setMessages(prev => {
-              const messageExists = prev.some(msg => msg.id === processedMessage.id);
-              if (messageExists) {
-                console.log('➖ Mensagem da IA já existe, ignorando:', processedMessage.id);
-                return prev;
-              }
-              return [...prev, processedMessage];
-            });
-          } else if (data.type === 'contact_updated' && data.contact) {
-            console.log(' Contato atualizado via WebSocket:', data.contact);
-          } else if (data.type === 'message_updated' && data.message) {
-            console.log('➕ Mensagem atualizada via WebSocket:', data.message);
-            
-            // Processar conteúdo da mensagem atualizada
-            let processedMessage = { ...data.message };
-            processedMessage.content = processMessageContent(processedMessage.content, processedMessage.is_from_customer);
-            
-            // Atualizar mensagem existente
-            setMessages(prev => {
-              const messageIndex = prev.findIndex(msg => msg.id === processedMessage.id);
-              if (messageIndex !== -1) {
-                const updatedMessages = [...prev];
-                updatedMessages[messageIndex] = processedMessage;
-                return updatedMessages;
-              }
-              return prev;
-            });
+            if (onConversationUpdate) {
+              onConversationUpdate({
+                ...conversation,
+                assignee_id: data.data.assignee_id
+              });
+            }
           }
-        } catch (e) {
-          console.error(' Erro ao processar mensagem WebSocket:', e);
+          
+          // Listener para mudanças de provedor (isolamento multi-tenant)
+          if (data.event_type === 'provedor_changed') {
+            console.log('🏢 Mudança de provedor detectada via WebSocket');
+            
+            // Verificar se a conversa atual pertence ao provedor correto
+            if (data.data.provedor_id !== conversation?.contact?.provedor?.id) {
+              console.log('⚠️ Conversa não pertence ao provedor atual, redirecionando...');
+              
+              // Redirecionar para lista de conversas
+              if (onConversationClose) {
+                onConversationClose();
+              }
+              
+              // Limpar estado
+              setMessages([]);
+              setMessage('');
+              setLoading(false);
+              setError('');
+            }
+          }
+          }
+          
+        } catch (error) {
+          console.error('# Debug logging removed for security Erro ao processar mensagem WebSocket ChatArea:', error);
         }
       };
       
       ws.onerror = (error) => {
-        console.error(' Erro no WebSocket:', error);
+        console.error('# Debug logging removed for security Erro no WebSocket ChatArea:', error);
       };
       
       ws.onclose = (event) => {
-        console.log('🔌 WebSocket desconectado:', event.code, event.reason);
-        
-        // Clear heartbeat interval
-        if (wsRef.current.heartbeatInterval) {
-          clearInterval(wsRef.current.heartbeatInterval);
-          wsRef.current.heartbeatInterval = null;
-        }
-        
-        wsRef.current = null;
-        
-        // Reconectar automaticamente se não foi fechado intencionalmente
-        if (event.code !== 1000) {
-          const retryCount = (wsRef.current?.retryCount || 0) + 1;
-          const maxRetries = 5;
-          const retryDelay = Math.min(1000 * Math.pow(2, retryCount - 1), 10000); // Exponential backoff, max 10s
-          
-          if (retryCount <= maxRetries) {
-            console.log(`🔄 Tentando reconectar WebSocket (tentativa ${retryCount}/${maxRetries}) em ${retryDelay}ms...`);
-            setTimeout(() => {
-              if (wsRef.current === null) { // Só reconectar se ainda não foi reconectado
-                wsRef.current = { retryCount };
-                connectWebSocket();
-              }
-            }, retryDelay);
-          } else {
-            console.error('❌ Máximo de tentativas de reconexão atingido');
-          }
+        console.log('# Debug logging removed for security WebSocket ChatArea desconectado:', event.code, event.reason);
+        if (conversation && conversation.id) {
+          setTimeout(connectWebSocket, 3000);
         }
       };
     };
@@ -344,15 +439,50 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
     connectWebSocket();
     
     return () => {
-      console.log('🔌 Fechando WebSocket');
+      console.log('# Debug logging removed for security Fechando WebSocket');
       if (wsRef.current) {
-        // Clear heartbeat interval
         if (wsRef.current.heartbeatInterval) {
           clearInterval(wsRef.current.heartbeatInterval);
         }
-        wsRef.current.close(1000); // Close code 1000 = normal closure
+        if (wsRef.current.readyState === WebSocket.OPEN) {
+          wsRef.current.close(1000);
+        }
         wsRef.current = null;
       }
+    };
+  }, [conversation]);
+
+  // # Debug logging removed for security LIMPEZA AUTOMÁTICA DE MENSAGENS TEMPORÁRIAS
+  useEffect(() => {
+    const cleanupInterval = setInterval(() => {
+      setMessages(currentMessages => {
+        const now = Date.now();
+        return currentMessages.filter(msg => {
+          if (msg.isTemporary || msg.is_sending) {
+            const messageAge = now - new Date(msg.created_at).getTime();
+            return messageAge <= 15000; // Manter por no máximo 15 segundos
+          }
+          return true;
+        });
+      });
+    }, 5000); // Executar a cada 5 segundos
+    
+    // Sistema de refresh automático para evitar cache desatualizado
+    const refreshInterval = setInterval(() => {
+      if (conversation && conversation.id) {
+        console.log('🔄 Refresh automático de conversa para evitar cache desatualizado');
+        
+        // Recarregar mensagens da conversa
+        fetchMessages();
+        
+        // Verificar se a conversa ainda está ativa
+        checkConversationStatus();
+      }
+    }, 30000); // Refresh a cada 30 segundos
+
+    return () => {
+      clearInterval(cleanupInterval);
+      clearInterval(refreshInterval);
     };
   }, [conversation]);
 
@@ -364,10 +494,21 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
     scrollToBottom();
   }, [messages]);
 
+  // # Debug logging removed for security handleSendMessage CORRIGIDO - SEM mensagem temporária
   const handleSendMessage = async () => {
     if (!message.trim() || !conversation) return;
     setError('');
     const token = localStorage.getItem('token');
+    
+    // # Debug logging removed for security Marcar mensagem como pendente para evitar duplicatas
+    const messageKey = message.trim();
+    if (pendingMessages.has(messageKey)) {
+      console.log('🚫 Mensagem já está sendo enviada, ignorando...');
+      return;
+    }
+    
+    setPendingMessages(prev => new Set(prev).add(messageKey));
+    
     try {
       // Buscar informações do usuário atual para adicionar assinatura
       const userResponse = await axios.get('/api/auth/me/', {
@@ -380,20 +521,7 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
       // Formatar mensagem com nome do usuário para enviar ao WhatsApp
       const formattedMessage = `*${userName} disse:*\n${message}`;
       
-      // Adicionar mensagem imediatamente no frontend (sem assinatura)
-      const messageToShow = {
-        id: Date.now(), // ID temporário
-        content: message, // Mensagem original sem assinatura
-        is_from_customer: false,
-        created_at: new Date().toISOString(),
-        // Adicionar informações de resposta se estiver respondendo
-        additional_attributes: replyingToMessage ? {
-          is_reply: true,
-          reply_to_message_id: replyingToMessage.additional_attributes?.external_id || replyingToMessage.id,
-          reply_to_content: replyingToMessage.content
-        } : null
-      };
-      setMessages(prev => [...prev, messageToShow]);
+      // # Debug logging removed for security NÃO adicionar mensagem temporária - deixar o WebSocket fazer isso
       
       // Preparar payload para envio
       const payload = {
@@ -403,7 +531,6 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
       
       // Adicionar informações de resposta se estiver respondendo a uma mensagem
       if (replyingToMessage) {
-        // Usar external_id se disponível, senão usar o ID interno
         const replyId = replyingToMessage.additional_attributes?.external_id || replyingToMessage.id;
         payload.reply_to_message_id = replyId;
         payload.reply_to_content = replyingToMessage.content;
@@ -416,14 +543,53 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
       }
       
       // Enviar mensagem formatada para o WhatsApp
-      await axios.post('/api/messages/send_text/', payload, {
+      const response = await axios.post('/api/messages/send_text/', payload, {
         headers: { Authorization: `Token ${token}` }
       });
       
+      // # Debug logging removed for security Se o WebSocket não funcionar, adicionar mensagem do response
+      setTimeout(() => {
+        if (pendingMessages.has(messageKey)) {
+          console.log('⏰ WebSocket não recebeu mensagem, adicionando do response...');
+          if (response.data && response.data.id) {
+            const processedMessage = {
+              ...response.data,
+              content: processMessageContent(response.data.content, response.data.is_from_customer)
+            };
+            
+            setMessages(currentMessages => {
+              const messageExists = currentMessages.some(m => m.id === response.data.id);
+              if (!messageExists) {
+                return [...currentMessages, processedMessage].sort((a, b) => 
+                  new Date(a.created_at) - new Date(b.created_at)
+                );
+              }
+              return currentMessages;
+            });
+          }
+          
+          // Remover das pendentes
+          setPendingMessages(prev => {
+            const newSet = new Set(prev);
+            newSet.delete(messageKey);
+            return newSet;
+          });
+        }
+      }, 2000); // Aguardar 2 segundos pelo WebSocket
+      
       setMessage('');
-      setReplyingToMessage(null); // Limpar mensagem respondida após envio
+      setReplyingToMessage(null);
+      
     } catch (e) {
+      console.error('# Debug logging removed for security Erro ao enviar mensagem:', e);
       setError('Erro ao enviar mensagem.');
+      
+      // # Debug logging removed for security Remover das pendentes em caso de erro
+      setPendingMessages(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(messageKey);
+        return newSet;
+      });
     }
   };
 
@@ -437,12 +603,10 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
   // Funções para gravação de áudio
   const startRecording = async () => {
     try {
-      // Verificar se o navegador suporta getUserMedia
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error('getUserMedia não é suportado neste navegador');
       }
       
-      // Verificar se está usando HTTPS ou localhost
       const isSecure = window.location.protocol === 'https:' || 
                       window.location.hostname === 'localhost' || 
                       window.location.hostname === '127.0.0.1' ||
@@ -471,7 +635,6 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
         setAudioBlob(blob);
         setAudioUrl(URL.createObjectURL(blob));
         
-        // Parar todas as tracks do stream
         stream.getTracks().forEach(track => track.stop());
       };
       
@@ -479,7 +642,6 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
       setIsRecording(true);
       setRecordingTime(0);
       
-      // Iniciar contador de tempo
       recordingIntervalRef.current = setInterval(() => {
         setRecordingTime(prev => prev + 1);
       }, 1000);
@@ -528,7 +690,6 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
         recordingIntervalRef.current = null;
       }
       
-      // Parar todas as tracks do stream
       if (mediaRecorderRef.current.stream) {
         mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
       }
@@ -538,64 +699,56 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
   const sendAudioMessage = async () => {
     if (!audioBlob || !conversation) return;
     
-    // Evitar múltiplos cliques
     if (sendingMedia) {
-      console.log(' Já está enviando áudio, ignorando...');
+      console.log('🚫 Já está enviando áudio, ignorando...');
       return;
     }
     
     try {
-      console.log(' Iniciando envio de áudio PTT...');
+      console.log('🎙️ Iniciando envio de áudio PTT...');
       
-      // Converter blob para File
       const audioFile = new File([audioBlob], `audio_${Date.now()}.webm`, {
         type: 'audio/webm'
       });
       
-      console.log(' Dados do áudio:', {
+      console.log('🎙️ Dados do áudio:', {
         name: audioFile.name,
         size: audioFile.size,
         type: audioFile.type
       });
       
-      // Validar tamanho do arquivo (máximo 16MB para WhatsApp)
-      const maxSize = 16 * 1024 * 1024; // 16MB
+      const maxSize = 16 * 1024 * 1024;
       if (audioFile.size > maxSize) {
         setError('Áudio muito grande. Tamanho máximo: 16MB');
         return;
       }
       
-      // Validar se o blob é válido
       if (audioBlob.size === 0) {
         setError('Áudio inválido. Tente gravar novamente.');
         return;
       }
       
-      console.log(' Validações passaram, enviando áudio...');
+      console.log('# Debug logging removed for security Validações passaram, enviando áudio...');
       
-      // Garantir que o media_type seja 'ptt' para áudio
       const finalMediaType = 'ptt';
-      console.log(` Usando media_type: ${finalMediaType}`);
+      console.log(`🎙️ Usando media_type: ${finalMediaType}`);
       
-      // Verificação adicional
       if (finalMediaType !== 'ptt') {
-        console.error(' ERRO: media_type não é PTT!');
+        console.error('# Debug logging removed for security ERRO: media_type não é PTT!');
         setError('Erro interno: tipo de mídia inválido');
         return;
       }
       
-      // Enviar como mensagem de voz (PTT - Push to Talk) - SEM caption
       await handleSendMedia(audioFile, finalMediaType, null);
       
-      console.log(' Áudio enviado com sucesso!');
+      console.log('# Debug logging removed for security Áudio enviado com sucesso!');
       
-      // Limpar estados
       setAudioBlob(null);
       setAudioUrl(null);
       setRecordingTime(0);
       
     } catch (error) {
-      console.error(' Erro ao enviar áudio:', error);
+      console.error('# Debug logging removed for security Erro ao enviar áudio:', error);
       setError('Erro ao enviar áudio: ' + error.message);
     }
   };
@@ -606,11 +759,9 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // Função para reproduzir áudio
   const playAudio = (messageId, audioUrl) => {
-    console.log(' Reproduzindo áudio:', { messageId, audioUrl });
+    console.log('🎵 Reproduzindo áudio:', { messageId, audioUrl });
     
-    // Parar áudio anterior se estiver tocando
     if (playingAudio && playingAudio !== messageId) {
       const prevAudio = audioRefs.current[playingAudio];
       if (prevAudio) {
@@ -619,13 +770,11 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
       }
     }
     
-    // Criar ou usar áudio existente
     let audio = audioRefs.current[messageId];
     if (!audio) {
       audio = new Audio(audioUrl);
       audioRefs.current[messageId] = audio;
       
-      // Configurar eventos do áudio
       audio.addEventListener('timeupdate', () => {
         const progress = (audio.currentTime / audio.duration) * 100;
         setAudioProgress(prev => ({ ...prev, [messageId]: progress }));
@@ -642,7 +791,6 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
       });
     }
     
-    // Reproduzir áudio
     audio.play().then(() => {
       setPlayingAudio(messageId);
     }).catch(e => {
@@ -650,7 +798,6 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
     });
   };
   
-  // Função para pausar áudio
   const pauseAudio = (messageId) => {
     const audio = audioRefs.current[messageId];
     if (audio) {
@@ -668,7 +815,6 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
       if (audioUrl) {
         URL.revokeObjectURL(audioUrl);
       }
-      // Limpar todos os áudios
       Object.values(audioRefs.current).forEach(audio => {
         if (audio) {
           audio.pause();
@@ -679,13 +825,12 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
     };
   }, [audioUrl]);
 
-  // Função para enviar mídia
+  // # Debug logging removed for security handleSendMedia CORRIGIDO - SEM mensagem temporária
   const handleSendMedia = async (file, mediaType, caption = '') => {
     if (!conversation) return;
     
-    // Evitar duplicação de envios
     if (sendingMedia) {
-      console.log(' Já está enviando mídia, ignorando...');
+      console.log('🚫 Já está enviando mídia, ignorando...');
       return;
     }
     
@@ -693,7 +838,7 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
     setSendingMedia(true);
     const token = localStorage.getItem('token');
     
-    console.log('�� Iniciando envio de mídia:', {
+    console.log('📤 Iniciando envio de mídia:', {
       fileName: file.name,
       fileSize: file.size,
       mediaType,
@@ -701,8 +846,7 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
       conversationId: conversation.id
     });
     
-    // Validar tamanho do arquivo (máximo 16MB para WhatsApp)
-    const maxSize = 16 * 1024 * 1024; // 16MB
+    const maxSize = 16 * 1024 * 1024;
     if (file.size > maxSize) {
       setError('Arquivo muito grande. Tamanho máximo: 16MB');
       setSendingMedia(false);
@@ -720,24 +864,11 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
     };
     
     if (!allowedTypes[mediaType]?.includes(file.type)) {
-      console.warn(' Tipo de arquivo não reconhecido:', file.type);
+      console.warn('⚠️ Tipo de arquivo não reconhecido:', file.type);
     }
     
     try {
-      // Adicionar mensagem de "enviando..." imediatamente no frontend
-      const sendingMessage = {
-        id: `sending_${Date.now()}`, // ID temporário
-                        content: mediaType === 'ptt' ? 'Mensagem de voz' : `Enviando ${file.name}...`,
-        is_from_customer: false,
-        created_at: new Date().toISOString(),
-        media_type: mediaType,
-        file_name: file.name,
-        file: file, // Adicionar o arquivo para criar URL temporária
-        file_url: mediaType === 'image' ? URL.createObjectURL(file) : null, // URL temporária para imagem
-        is_sending: true // Marcar como mensagem de envio
-      };
-      console.log('📱 Adicionando mensagem de envio no frontend:', sendingMessage);
-      setMessages(prev => [...prev, sendingMessage]);
+      // # Debug logging removed for security NÃO adicionar mensagem de "enviando..." - deixar o WebSocket fazer isso
       
       // Buscar informações do usuário atual se houver caption (exceto para PTT)
       let formattedCaption = caption;
@@ -760,7 +891,7 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
         formData.append('caption', formattedCaption);
       }
       
-      console.log(' Enviando mídia para o backend...');
+      console.log('📤 Enviando mídia para o backend...');
       console.log('📦 FormData contents:');
       for (let [key, value] of formData.entries()) {
         if (key === 'file') {
@@ -778,23 +909,29 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
         }
       });
       
-      console.log(' Mídia enviada com sucesso:', response.data);
+      console.log('# Debug logging removed for security Mídia enviada com sucesso:', response.data);
       
-      // Remover mensagem de "enviando..." e adicionar a mensagem real
-      setMessages(prev => {
-        const filteredMessages = prev.filter(msg => !msg.is_sending);
-        return [...filteredMessages, response.data];
-      });
+      // # Debug logging removed for security Se o WebSocket não funcionar, adicionar mensagem do response
+      setTimeout(() => {
+        if (response.data && response.data.id) {
+          setMessages(currentMessages => {
+            const messageExists = currentMessages.some(m => m.id === response.data.id);
+            if (!messageExists) {
+              console.log('⏰ WebSocket não recebeu mídia, adicionando do response...');
+              return [...currentMessages, response.data].sort((a, b) => 
+                new Date(a.created_at) - new Date(b.created_at)
+              );
+            }
+            return currentMessages;
+          });
+        }
+      }, 2000); // Aguardar 2 segundos pelo WebSocket
       
     } catch (e) {
-      console.error(' Erro ao enviar mídia:', e);
-      console.error(' Detalhes do erro:', e.response?.data);
+      console.error('# Debug logging removed for security Erro ao enviar mídia:', e);
+      console.error('# Debug logging removed for security Detalhes do erro:', e.response?.data);
       setError('Erro ao enviar mídia: ' + (e.response?.data?.detail || e.message));
-      
-      // Remover mensagem de "enviando..." em caso de erro
-      setMessages(prev => prev.filter(msg => !msg.is_sending));
     } finally {
-      // Sempre resetar o estado de envio
       setSendingMedia(false);
     }
   };
@@ -952,9 +1089,15 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
     if (!conversation) return;
     
     const token = localStorage.getItem('token');
+    const url = `/api/conversations/${conversation.id}/transfer/`;
+    
+    console.log('# Debug logging removed for security DEBUG: URL de transferência:', url);
+    console.log('# Debug logging removed for security DEBUG: Axios baseURL:', axios.defaults.baseURL);
+    console.log('# Debug logging removed for security DEBUG: URL completa:', axios.defaults.baseURL + url);
+    
     try {
       // Usar o mesmo endpoint do ConversasDashboard
-      await axios.post(`/api/conversations/${conversation.id}/transfer/`, { 
+      const response = await axios.post(url, { 
         user_id: agentId 
       }, {
         headers: { Authorization: `Token ${token}` }
@@ -964,26 +1107,56 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
       alert('Transferido com sucesso!');
       setShowTransferDropdown(false);
       
-      // Recarregar a página para atualizar a lista de conversas
-      window.location.reload();
+      // Atualizar a interface em vez de recarregar a página
+      if (response.data.success) {
+        const updatedConversation = {
+          ...conversation,
+          status: 'pending',
+          assignee: null
+        };
+        if (onConversationUpdate) {
+          onConversationUpdate(updatedConversation);
+        }
+        setShowTransferDropdown(false);
+      }
+      
     } catch (error) {
       console.error('Erro ao transferir conversa:', error);
+      console.error('# Debug logging removed for security DEBUG: URL que falhou:', url);
+      console.error('# Debug logging removed for security DEBUG: Axios baseURL atual:', axios.defaults.baseURL);
       alert('Erro ao transferir atendimento.');
     }
   };
 
-  const fetchProfilePicture = async () => {
-    if (!conversation || !conversation.contact) return;
+  const fetchProfilePicture = async (silent = false) => {
+    if (!conversation || !conversation.contact) {
+      return;
+    }
     
     setLoadingProfilePic(true);
     const token = localStorage.getItem('token');
     
     try {
       // Determinar o tipo de integração baseado no canal
-      const integrationType = conversation.inbox?.channel_type === 'whatsapp_beta' ? 'uazapi' : 'evolution';
-      const instanceName = conversation.inbox?.settings?.evolution_instance || 
-                          conversation.inbox?.settings?.instance || 
-                          conversation.inbox?.name?.replace('WhatsApp ', '');
+      // Para todas as conversas WhatsApp, usar Uazapi (que está funcionando)
+      const integrationType = (conversation.inbox?.channel_type === 'whatsapp' || 
+                              conversation.inbox?.channel_type === 'whatsapp_beta') ? 'uazapi' : 'evolution';
+      
+      // Para Uazapi, usar a instância configurada no provedor
+      // Para Evolution, usar a instância do canal
+      let instanceName;
+      if (integrationType === 'uazapi') {
+        // Para Uazapi, usar uma instância padrão ou buscar do provedor
+        instanceName = 'teste-niochat'; // Instância padrão da Uazapi
+      } else {
+        // Para Evolution, usar a instância do canal
+        instanceName = conversation.inbox?.settings?.evolution_instance || 
+                      conversation.inbox?.settings?.instance || 
+                      conversation.inbox?.name?.replace('WhatsApp ', '');
+      }
+      
+      console.log(`# Debug logging removed for security Buscando foto via ${integrationType}, instância: ${instanceName}`);
+      console.log(`# Debug logging removed for security Channel type: ${conversation.inbox?.channel_type}`);
       
       const response = await axios.post('/api/canais/get_whatsapp_profile_picture/', {
         phone: conversation.contact.phone,
@@ -994,13 +1167,19 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
       });
       
       if (response.data.success) {
-        alert('Foto do perfil atualizada com sucesso! Recarregue a página para ver a mudança.');
+        if (!silent) {
+          alert('Foto do perfil atualizada com sucesso! Recarregue a página para ver a mudança.');
+        }
       } else {
-        alert('Não foi possível obter a foto do perfil: ' + response.data.error);
+        if (!silent) {
+          alert('Não foi possível obter a foto do perfil: ' + response.data.error);
+        }
       }
     } catch (error) {
       console.error('Erro ao buscar foto do perfil:', error);
-      alert('Erro ao buscar foto do perfil. Verifique o console para mais detalhes.');
+      if (!silent) {
+        alert('Erro ao buscar foto do perfil. Verifique o console para mais detalhes.');
+      }
     } finally {
       setLoadingProfilePic(false);
     }
@@ -1024,7 +1203,7 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
         setShowReactionPicker(false);
         setSelectedMessageForReaction(null);
         
-        console.log('🔄 Processando mensagem após reação...');
+        console.log('# Debug logging removed for security Processando mensagem após reação...');
         
         // Atualizar a mensagem localmente com a resposta do backend
         const updatedMessage = response.data.updated_message;
@@ -1066,8 +1245,8 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
   const deleteMessage = async (messageId) => {
     try {
       const token = localStorage.getItem('token');
-      console.log('🔍 DEBUG: Tentando excluir mensagem:', messageId);
-      console.log('🔍 DEBUG: Token:', token ? 'Presente' : 'Ausente');
+      console.log('# Debug logging removed for security DEBUG: Tentando excluir mensagem:', messageId);
+      console.log('# Debug logging removed for security DEBUG: Token:', token ? 'Presente' : 'Ausente');
       
       // Chamar endpoint do backend para deletar mensagem
       const response = await axios.post('/api/messages/delete_message/', {
@@ -1076,7 +1255,7 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
         headers: { Authorization: `Token ${token}` }
       });
       
-      console.log('🔍 DEBUG: Resposta do servidor:', response.status, response.data);
+      console.log('# Debug logging removed for security DEBUG: Resposta do servidor:', response.status, response.data);
       
       if (response.data.success) {
         console.log('Mensagem apagada com sucesso');
@@ -1102,10 +1281,10 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
         alert('Erro ao apagar mensagem: ' + (response.data.error || 'Erro desconhecido'));
       }
     } catch (error) {
-      console.error('🔍 DEBUG: Erro completo:', error);
-      console.error('🔍 DEBUG: Status:', error.response?.status);
-      console.error('🔍 DEBUG: Data:', error.response?.data);
-      console.error('🔍 DEBUG: URL:', error.config?.url);
+      console.error('# Debug logging removed for security DEBUG: Erro completo:', error);
+      console.error('# Debug logging removed for security DEBUG: Status:', error.response?.status);
+      console.error('# Debug logging removed for security DEBUG: Data:', error.response?.data);
+      console.error('# Debug logging removed for security DEBUG: URL:', error.config?.url);
       
       let errorMessage = 'Erro ao apagar mensagem';
       if (error.response?.status === 401) {
@@ -1190,794 +1369,753 @@ const ChatArea = ({ conversation, onConversationClose, onConversationUpdate }) =
     return 'order-1';
   };
 
-  if (!conversation) {
-    return (
-      <div className="flex-1 flex items-center justify-center bg-background">
-        <div className="flex flex-col items-center text-center">
-          <img src="/logo.png" alt="Logo" style={{ width: 40, height: 40 }} className="object-contain mb-4" />
-          <span className="text-muted-foreground text-base">
-            Escolha uma conversa da lista para começar a atender
-          </span>
-        </div>
-      </div>
-    );
-  }
+  // # Debug logging removed for security USAR LIMPEZA DE DUPLICATAS NO RENDER
+  const uniqueMessages = cleanDuplicateMessages(messages);
+  
+  // Limpeza de duplicatas funcionando corretamente
 
-  const uniqueMessages = Array.from(new Map(messages.map(msg => [msg.id, msg])).values());
+  // Função para lidar com upload de arquivo
+  const handleFileUpload = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    // Determinar tipo de mídia baseado no tipo do arquivo
+    let mediaType = 'document'; // Padrão
+    
+    if (file.type.startsWith('image/')) {
+      mediaType = 'image';
+    } else if (file.type.startsWith('video/')) {
+      mediaType = 'video';
+    } else if (file.type.startsWith('audio/')) {
+      mediaType = 'audio';
+    }
+    
+    // Enviar arquivo
+    handleSendMedia(file, mediaType);
+    
+    // Limpar input
+    event.target.value = '';
+  };
+
+  // Função para abrir modal de imagem
+  const openImageModal = (imageUrl) => {
+    setSelectedImage(imageUrl);
+    setShowImageModal(true);
+  };
 
   return (
     <div className="flex-1 flex flex-col bg-background">
-      {/* Header */}
-      <div className="p-4 border-b border-border bg-card">
-                  <div className="flex items-center justify-between">
+      {/* Header da conversa */}
+      <div className="border-b border-border p-4 bg-card">
+          <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 bg-muted rounded-full flex items-center justify-center relative">
-                {conversation.contact.avatar ? (
+            <div className="relative">
+              {conversation.contact?.avatar ? (
                   <img 
                     src={conversation.contact.avatar} 
-                    alt={conversation.contact.name}
-                    className="w-10 h-10 rounded-full"
+                  alt={conversation.contact.name || 'Avatar'}
+                  className="w-10 h-10 rounded-full object-cover"
                     onError={(e) => {
-                      console.log('Erro ao carregar avatar:', conversation.contact.avatar);
                       e.target.style.display = 'none';
-                    }}
-                  />
-                ) : (
-                  <User className="w-5 h-5 text-muted-foreground" />
-                )}
-              </div>
-            <div>
-              <h3 className="font-medium text-card-foreground">
-                {conversation.contact.name}
-              </h3>
-              <div className="flex items-center space-x-2 text-sm text-muted-foreground">
-                {getChannelIcon(conversation.inbox?.channel_type)}
-                <span>{conversation.contact.phone || 'Contato'}</span>
+                    e.target.nextSibling.style.display = 'flex';
+                  }}
+                />
+              ) : null}
+              <div 
+                className={`w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-medium text-sm ${conversation.contact?.avatar ? 'hidden' : 'flex'}`}
+              >
+                {(conversation.contact?.name || conversation.contact?.phone || 'U').charAt(0).toUpperCase()}
               </div>
             </div>
-          </div>
-          
-          <div className="relative" ref={dropdownRef}>
-            <button 
-              onClick={() => setShowResolverDropdown(!showResolverDropdown)}
-              className="flex items-center space-x-2 px-3 py-2 text-muted-foreground hover:text-card-foreground hover:bg-muted rounded-lg transition-colors"
-            >
-              <span>{conversation.assignee ? 'Encerrar' : 'Atribuir'}</span>
-              <ChevronDown className={`w-4 h-4 transition-transform ${showResolverDropdown ? 'rotate-180' : ''}`} />
-            </button>
             
-            {showResolverDropdown && (
-              <div className="absolute right-0 top-full mt-1 w-48 bg-[#23272f] border border-border rounded-lg shadow-lg z-50">
-                <div className="py-1">
-                  {!conversation.assignee ? (
-                    // Opções para conversa não atribuída
-                    <>
-                      <button 
-                        onClick={handleAssignToMe}
-                        className="flex items-center space-x-2 w-full px-4 py-2 text-sm text-muted-foreground hover:text-card-foreground hover:bg-muted transition-colors"
-                      >
-                        <UserCheck className="w-4 h-4" />
-                        <span>Atribuir para mim</span>
-                      </button>
-                      
-                      <button 
-                        onClick={handleTransferConversation}
-                        className="flex items-center space-x-2 w-full px-4 py-2 text-sm text-muted-foreground hover:text-card-foreground hover:bg-muted transition-colors"
-                      >
-                        <ArrowRightLeft className="w-4 h-4" />
-                        <span>Transferir</span>
-                      </button>
-                    </>
-                  ) : (
-                    // Opções para conversa atribuída
-                    <>
-                      <button 
-                        onClick={handleCloseConversation}
-                        className="flex items-center space-x-2 w-full px-4 py-2 text-sm text-muted-foreground hover:text-card-foreground hover:bg-muted transition-colors"
-                      >
-                        <CheckCircle2 className="w-4 h-4" />
-                        <span>Encerrar</span>
-                      </button>
-                      
-                      <button 
-                        onClick={handleTransferConversation}
-                        className="flex items-center space-x-2 w-full px-4 py-2 text-sm text-muted-foreground hover:text-card-foreground hover:bg-muted transition-colors"
-                      >
-                        <ArrowRightLeft className="w-4 h-4" />
-                        <span>Transferir</span>
-                      </button>
-                    </>
-                  )}
+            <div className="flex-1">
+              <div className="flex items-center space-x-2">
+                <h3 className="font-medium text-foreground">
+                  {conversation.contact?.name || conversation.contact?.phone || 'Contato sem nome'}
+                </h3>
+                <div className="flex items-center space-x-1 text-xs text-muted-foreground">
+                  {getChannelIcon(conversation.inbox?.channel_type)}
+                  <span className="capitalize">
+                    {conversation.inbox?.channel_type === 'whatsapp' ? 'WhatsApp' : 
+                     conversation.inbox?.channel_type === 'telegram' ? 'Telegram' :
+                     conversation.inbox?.channel_type === 'email' ? 'Email' :
+                     conversation.inbox?.channel_type === 'instagram' ? 'Instagram' :
+                     conversation.inbox?.channel_type === 'webchat' ? 'Web Chat' :
+                     conversation.inbox?.channel_type || 'Chat'}
+                  </span>
                 </div>
               </div>
+              {conversation.contact?.phone && (
+                <p className="text-sm text-muted-foreground">{conversation.contact.phone}</p>
+              )}
+              </div>
+            </div>
+            
+          <div className="flex items-center space-x-2">
+            {/* Botão para buscar foto do perfil */}
+            {conversation.inbox?.channel_type === 'whatsapp' && (
+              <button
+                onClick={() => fetchProfilePicture(false)}
+                disabled={loadingProfilePic}
+                className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors disabled:opacity-50"
+                title="Atualizar foto do perfil"
+              >
+                {loadingProfilePic ? (
+                  <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <User className="w-4 h-4" />
+                )}
+              </button>
             )}
+            
+            {/* Dropdown de ações */}
+            <div className="relative" ref={dropdownRef}>
+              <button 
+                onClick={() => setShowResolverDropdown(!showResolverDropdown)}
+                className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors"
+                title="Ações da conversa"
+              >
+                <ChevronDown className="w-4 h-4" />
+              </button>
+              
+              {showResolverDropdown && (
+                <div className="absolute right-0 top-full mt-1 w-48 bg-popover border border-border rounded-lg shadow-lg py-1 z-10">
+                        <button 
+                          onClick={handleAssignToMe}
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-accent flex items-center space-x-2"
+                        >
+                          <UserCheck className="w-4 h-4" />
+                          <span>Atribuir para mim</span>
+                        </button>
+                        <button 
+                          onClick={handleTransferConversation}
+                    disabled={loadingAgents}
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-accent flex items-center space-x-2 disabled:opacity-50"
+                        >
+                          <ArrowRightLeft className="w-4 h-4" />
+                    <span>{loadingAgents ? 'Carregando...' : 'Transferir'}</span>
+                        </button>
+                        <button 
+                          onClick={handleCloseConversation}
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-accent flex items-center space-x-2 text-red-600"
+                        >
+                          <CheckCircle2 className="w-4 h-4" />
+                    <span>Encerrar conversa</span>
+                        </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
-      </div>
+            </div>
 
-      {/* Messages */}
-      <div 
-        className="flex-1 overflow-y-auto p-4 space-y-4"
-        onDragOver={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-        }}
-        onDrop={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          
-          const files = e.dataTransfer.files;
-          if (files.length > 0) {
-            const file = files[0];
-            console.log(' Arquivo arrastado:', file);
-            
-            // Determinar tipo de mídia
-            const extension = file.name.split('.').pop().toLowerCase();
-            let mediaType = 'document';
-            
-            if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg'].includes(extension)) {
-              mediaType = 'image';
-            } else if (['mp4', 'avi', 'mov', 'wmv', 'flv', 'mkv', 'webm'].includes(extension)) {
-              mediaType = 'video';
-            } else if (['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac'].includes(extension)) {
-              mediaType = 'audio';
-            }
-            
-            // Enviar mídia automaticamente sem modal
-            console.log('🚀 Enviando mídia arrastada automaticamente:', file.name);
-            handleSendMedia(file, mediaType, '');
-          }
-        }}
-      >
-        {loading ? (
-          <div className="text-center text-muted-foreground">Carregando mensagens...</div>
-        ) : error ? (
-          <div className="text-center text-red-500">{error}</div>
-        ) : uniqueMessages.length === 0 ? (
-          <div className="text-center text-muted-foreground">Nenhuma mensagem nesta conversa.</div>
-        ) : (
-          uniqueMessages.map((msg) => {
-            console.log('Mensagem:', msg);
-            // Processar o conteúdo da mensagem
-            let content = msg.content;
-            
-            // Se o conteúdo for JSON, pegar só o campo 'text'
-            try {
-              if (typeof content === 'string' && content.startsWith('{')) {
-                const parsed = JSON.parse(content);
-                if (parsed && parsed.text) {
-                  content = parsed.text;
-                } else if (parsed && parsed.message) {
-                  content = parsed.message;
-                } else {
-                  content = JSON.stringify(parsed);
-                }
-              }
-            } catch (e) {
-              // Se falhar ao parsear JSON, manter o conteúdo original
-              console.log('Erro ao processar conteúdo JSON:', e);
-            }
-            
-            // Remover assinatura do agente se presente
-            if (content && content.match(/\*.*disse:\*\n/)) {
-              content = content.replace(/\*.*disse:\*\n/, '');
-            }
+      {/* Lista de mensagens */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {loading && (
+          <div className="flex justify-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+          </div>
+        )}
+        
+        {error && (
+          <div className="text-center text-red-500 bg-red-50 dark:bg-red-950 p-3 rounded-lg">
+            {error}
+        </div>
+      )}
+
+        {uniqueMessages.map((msg) => {
+          const content = msg.content || '';
             const isCustomer = msg.is_from_customer;
-            
-            // Verificar se é uma mensagem de mídia (usar message_type ou media_type)
-            const isMediaMessage = (msg.message_type && ['image', 'video', 'audio', 'document'].includes(msg.message_type)) || 
-                                 (msg.media_type && ['image', 'video', 'audio', 'ptt', 'myaudio', 'document'].includes(msg.media_type));
-            
-            // Debug: Log das mensagens para verificar estrutura
-            if (msg.media_type === 'ptt') {
-              console.log(' Mensagem PTT encontrada:', {
-                id: msg.id,
-                content: msg.content,
-                media_type: msg.media_type,
-                is_sending: msg.is_sending,
-                file_url: msg.additional_attributes?.file_url || msg.file_url,
-                additional_attributes: msg.additional_attributes
-              });
-            }
-            
-            // Debug: Log específico para mensagens de imagem
-            if (msg.message_type === 'image' || msg.media_type === 'image') {
-              console.log(' 🖼️ MENSAGEM DE IMAGEM DETECTADA:', {
-                id: msg.id,
-                message_type: msg.message_type,
-                media_type: msg.media_type,
-                content: msg.content,
-                additional_attributes: msg.additional_attributes,
-                file_url: msg.additional_attributes?.file_url || msg.file_url,
-                isMediaMessage: isMediaMessage,
-                shouldRenderImage: isMediaMessage && (msg.message_type === 'image' || msg.media_type === 'image')
-              });
-            }
+          const isBot = !isCustomer && (msg.message_type === 'incoming' || msg.sender?.sender_type === 'bot');
+          const isAgent = !isCustomer && !isBot;
+          const isLarge = isLargeMessage(content);
+          
+          // Determinar se a mensagem tem mídia
+          const hasImage = (msg.attachments && msg.attachments.some(att => att.file_type === 'image')) || 
+                          (msg.message_type === 'image' && msg.file_url);
+          const hasVideo = (msg.attachments && msg.attachments.some(att => att.file_type === 'video')) || 
+                          (msg.message_type === 'video' && msg.file_url);
+          const hasAudio = (msg.attachments && msg.attachments.some(att => att.file_type === 'audio')) || 
+                          (msg.message_type === 'audio' && msg.file_url);
+          const hasDocument = (msg.attachments && msg.attachments.some(att => att.file_type === 'file')) || 
+                             (msg.message_type === 'document' && msg.file_url);
+
+          // Debug: logar dados da mensagem
+          if (msg.message_type === 'image' || (msg.attachments && msg.attachments.some(att => att.file_type === 'image'))) {
+            console.log('🖼️ MENSAGEM COM IMAGEM:', {
+              id: msg.id,
+              message_type: msg.message_type,
+              file_url: msg.file_url,
+              attachments: msg.attachments,
+              content: msg.content,
+              hasImage,
+              'URL construída': msg.file_url ? (msg.file_url.startsWith('http') ? msg.file_url : `http://192.168.100.55:8012${msg.file_url}`) : 'N/A'
+            });
+          }
             
             return (
-          <div
-            key={msg.id}
-            className={`flex ${getMessageAlignment(msg, content)}`}
-          >
-            <div className={`message-bubble ${getMessageOrder(msg, content)}`}> 
-              {/* Mostrar mensagem respondida se existir */}
-              {msg.additional_attributes && msg.additional_attributes.reply_to_content && (
-                <div className={`mb-2 p-2 rounded-lg text-xs ${
-                  isCustomer 
-                    ? 'bg-[#1a1d23] text-gray-300 border-l-3 border-blue-400' 
-                    : 'bg-[#008a93] text-white border-l-3 border-white'
-                }`}>
-                  <div className="flex items-center gap-1 mb-1">
-                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M7.707 3.293a1 1 0 010 1.414L5.414 7H11a7 7 0 017 7v2a1 1 0 11-2 0v-2a5 5 0 00-5-5H5.414l2.293 2.293a1 1 0 11-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clipRule="evenodd" />
-                    </svg>
-                    <span className="font-medium">Respondendo a:</span>
-                  </div>
-                  <div className="text-gray-400 truncate">
-                    {msg.additional_attributes.reply_to_content}
+            <div key={msg.id} className={`flex ${getMessageAlignment(msg, content)} group`}>
+              <div className={`max-w-[70%] ${getMessageOrder(msg, content)}`}>
+                <div className={`
+                  rounded-2xl px-4 py-3 shadow-sm
+                  ${isCustomer 
+                    ? 'bg-muted text-foreground' 
+                    : isBot 
+                      ? 'bg-blue-500 text-white'
+                      : 'bg-green-500 text-white'
+                  }
+                  ${isLarge ? 'rounded-2xl' : 'rounded-2xl'}
+                `}>
+                  {/* Resposta a mensagem anterior */}
+                  {msg.additional_attributes?.is_reply && (
+                    <div className="mb-2 p-2 bg-black/10 rounded-lg text-xs opacity-75">
+                      <div className="font-medium">Respondendo a:</div>
+                      <div className="truncate">
+                        {msg.additional_attributes.reply_to_content || 'Mensagem anterior'}
                   </div>
                 </div>
               )}
               
-              {/* Mostrar mensagem respondida se existir (formato alternativo) */}
-              {msg.additional_attributes?.reply_to_message_id && msg.additional_attributes?.reply_to_content && !msg.additional_attributes?.is_reply && (
-                <div className={`mb-2 p-2 rounded-lg text-xs ${
-                  isCustomer 
-                    ? 'bg-[#1a1d23] text-gray-300 border-l-3 border-blue-400' 
-                    : 'bg-[#008a93] text-white border-l-3 border-white'
-                }`}>
-                  <div className="flex items-center gap-1 mb-1">
-                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M7.707 3.293a1 1 0 010 1.414L5.414 7H11a7 7 0 017 7v2a1 1 0 11-2 0v-2a5 5 0 00-5-5H5.414l2.293 2.293a1 1 0 11-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clipRule="evenodd" />
-                    </svg>
-                    <span className="font-medium">Respondendo a:</span>
-                  </div>
-                  <div className="text-gray-400 truncate">
-                    {msg.additional_attributes.reply_to_content}
-                  </div>
-                </div>
-              )}
-              
-              <div className={`px-4 py-2 rounded-lg shadow-md message-bubble-content ${
-                msg.is_sending 
-                  ? 'bg-gray-500 text-white animate-pulse' // Estilo para mensagem de envio
-                  : isCustomer
-                    ? 'bg-[#23272f] text-white' // Preto para mensagens do cliente
-                    : 'bg-[#009ca6] text-white' // Azul para TODAS as mensagens do sistema (IA ou atendente)
-              }`}>
-                {/* Mostrar imagem se for uma mensagem de mídia com imagem */}
-                {isMediaMessage && (msg.message_type === 'image' || msg.media_type === 'image') && (
-                  <div className="mb-2">
-                    <img 
-                      src={msg.additional_attributes?.file_url || msg.file_url || (msg.file ? URL.createObjectURL(msg.file) : null)} 
-                      alt={msg.additional_attributes?.file_name || msg.file_name || 'Imagem'}
-                      className="max-w-full h-auto rounded-lg cursor-pointer hover:opacity-80 transition-opacity"
-                      style={{ maxHeight: '200px' }}
-                      onClick={() => {
-                        setSelectedImage(msg.additional_attributes?.file_url || msg.file_url);
-                        setShowImageModal(true);
-                      }}
-                      onError={(e) => {
-                        console.log('Erro ao carregar imagem:', e);
-                        e.target.style.display = 'none';
-                      }}
+                  {/* Anexos de imagem */}
+                  {hasImage && msg.attachments && msg.attachments.filter(att => att.file_type === 'image').map((attachment, index) => (
+                    <div key={index} className="mb-2">
+                      <img
+                        src={attachment.data_url}
+                        alt="Imagem"
+                        className="max-w-full h-auto rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
+                        onClick={() => openImageModal(attachment.data_url)}
+                        style={{ maxHeight: '300px' }}
                     />
                   </div>
-                )}
-                
-                {/* Mostrar vídeo se for uma mensagem de mídia com vídeo */}
-                {isMediaMessage && (msg.message_type === 'video' || msg.media_type === 'video') && (
-                  <div className="mb-2">
+                  ))}
+                  
+                  {/* Imagens via file_url (WhatsApp/Telegram etc) */}
+                  {hasImage && msg.message_type === 'image' && msg.file_url && (
+                    <div className="mb-2">
+                      <img
+                        src={msg.file_url.startsWith('http') ? msg.file_url : `http://192.168.100.55:8012${msg.file_url}`}
+                        alt="Imagem"
+                        className="max-w-full h-auto rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
+                        onClick={() => openImageModal(msg.file_url.startsWith('http') ? msg.file_url : `http://192.168.100.55:8012${msg.file_url}`)}
+                        style={{ maxHeight: '300px' }}
+                        onError={(e) => {
+                          console.error('Erro ao carregar imagem:', msg.file_url);
+                          e.target.style.display = 'none';
+                        }}
+                      />
+                    </div>
+                  )}
+                  
+                  {/* Anexos de vídeo */}
+                  {hasVideo && msg.attachments && msg.attachments.filter(att => att.file_type === 'video').map((attachment, index) => (
+                    <div key={index} className="mb-2">
                     <video 
-                      src={msg.additional_attributes?.file_url || msg.file_url || (msg.file ? URL.createObjectURL(msg.file) : null)} 
                       controls
                       className="max-w-full h-auto rounded-lg"
                       style={{ maxHeight: '300px' }}
-                      onError={(e) => {
-                        console.log('Erro ao carregar vídeo:', e);
-                        e.target.style.display = 'none';
-                      }}
-                    />
+                      >
+                        <source src={attachment.data_url} type="video/mp4" />
+                        Seu navegador não suporta o elemento de vídeo.
+                      </video>
                   </div>
-                )}
-                
-                {/* Player de áudio customizado para message_type audio ou media_type audio, ptt ou myaudio */}
-                {(() => {
-                  const isAudioType = (msg.message_type === 'audio') || 
-                                    ['audio', 'ptt', 'myaudio'].includes(msg.media_type?.toLowerCase());
-                  const hasFileUrl = msg.additional_attributes?.file_url || msg.file_url;
+                  ))}
                   
-                  // Log específico para mensagens de áudio
-                  if (isAudioType || msg.message_type === 'audio' || msg.media_type === 'ptt' || msg.media_type === 'audio') {
-                    console.log(' DEBUG: MENSAGEM DE ÁUDIO DETECTADA NO FRONTEND:', {
-                      message_type: msg.message_type,
-                      media_type: msg.media_type,
-                      media_type_lower: msg.media_type?.toLowerCase(),
-                      isAudioType: isAudioType,
-                      hasFileUrl: hasFileUrl,
-                      file_url: msg.additional_attributes?.file_url || msg.file_url,
-                      additional_attributes: msg.additional_attributes,
-                      shouldRender: isAudioType && hasFileUrl,
-                      isCustomer: isCustomer,
-                      content: msg.content
-                    });
-                  }
+                  {/* Vídeos via file_url */}
+                  {hasVideo && msg.message_type === 'video' && msg.file_url && (
+                    <div className="mb-2">
+                      <video 
+                        controls
+                        className="max-w-full h-auto rounded-lg"
+                        style={{ maxHeight: '300px' }}
+                        onError={(e) => {
+                          console.error('Erro ao carregar vídeo:', msg.file_url);
+                        }}
+                      >
+                        <source src={msg.file_url.startsWith('http') ? msg.file_url : `http://192.168.100.55:8012${msg.file_url}`} type="video/mp4" />
+                        Seu navegador não suporta o elemento de vídeo.
+                      </video>
+                    </div>
+                  )}
                   
-                  return isAudioType && hasFileUrl;
-                })() && (
-                  <div className="mb-2">
-                    {console.log(' DEBUG: Renderizando player de áudio para:', {
-                      media_type: msg.media_type,
-                      file_url: msg.additional_attributes?.file_url || msg.file_url,
-                      message_type: msg.message_type,
-                      additional_attributes: msg.additional_attributes,
-                      isCustomer: isCustomer
-                    })}
+                  {/* Anexos de áudio */}
+                  {hasAudio && msg.attachments && msg.attachments.filter(att => att.file_type === 'audio').map((attachment, index) => (
+                    <div key={index} className="mb-2">
                     <CustomAudioPlayer 
-                      src={msg.additional_attributes?.file_url || msg.file_url}
-                      isCustomer={isCustomer}
+                        src={attachment.data_url} 
+                        messageId={msg.id}
+                        playingAudio={playingAudio}
+                        audioProgress={audioProgress}
+                        onPlay={() => playAudio(msg.id, attachment.data_url)}
+                        onPause={() => pauseAudio(msg.id)}
                     />
                   </div>
-                )}
-                
-                {/* Mostrar conteúdo da mensagem se houver conteúdo E não for uma mensagem de mídia */}
-                {content && !isMediaMessage && (
-                  <span className="whitespace-pre-wrap break-words">{content}</span>
-                )}
-                
-                {/* Para mensagens de mídia, mostrar apenas o caption se houver */}
-                {isMediaMessage && content && content !== msg.additional_attributes?.file_name && (
-                  <div className="mt-2 text-sm opacity-80">
-                    <span className="whitespace-pre-wrap break-words">{content}</span>
+                  ))}
+                  
+                  {/* Áudios via file_url */}
+                  {hasAudio && msg.message_type === 'audio' && msg.file_url && (
+                    <div className="mb-2">
+                      <CustomAudioPlayer 
+                        src={msg.file_url.startsWith('http') ? msg.file_url : `http://192.168.100.55:8012${msg.file_url}`} 
+                        messageId={msg.id}
+                        playingAudio={playingAudio}
+                        audioProgress={audioProgress}
+                        onPlay={() => playAudio(msg.id, msg.file_url.startsWith('http') ? msg.file_url : `http://192.168.100.55:8012${msg.file_url}`)}
+                        onPause={() => pauseAudio(msg.id)}
+                      />
+                    </div>
+                  )}
+                  
+                  {/* Anexos de documento */}
+                  {hasDocument && msg.attachments && msg.attachments.filter(att => att.file_type === 'file').map((attachment, index) => (
+                    <div key={index} className="mb-2">
+                      <a
+                        href={attachment.data_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center space-x-2 p-2 bg-black/10 rounded-lg hover:bg-black/20 transition-colors"
+                      >
+                        <Paperclip className="w-4 h-4" />
+                        <span className="text-sm">{attachment.file_name || 'Documento'}</span>
+                      </a>
                   </div>
+                  ))}
+                  
+                  {/* Documentos via file_url */}
+                  {hasDocument && msg.message_type === 'document' && msg.file_url && (
+                    <div className="mb-2">
+                      <a
+                        href={msg.file_url.startsWith('http') ? msg.file_url : `http://192.168.100.55:8012${msg.file_url}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center space-x-2 p-2 bg-black/10 rounded-lg hover:bg-black/20 transition-colors"
+                      >
+                        <Paperclip className="w-4 h-4" />
+                        <span className="text-sm">{msg.content || 'Documento'}</span>
+                      </a>
+                    </div>
+                  )}
+                  
+                  {/* QR Codes PIX */}
+                  {msg.message_type === 'image' && msg.content && msg.content.includes('QR Code PIX') && (
+                    <div className="mb-2 p-3 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
+                      <div className="text-sm font-medium text-green-900 dark:text-green-100 mb-2">
+                        🎯 QR Code PIX
+                      </div>
+                      <div className="text-xs text-green-700 dark:text-green-300 mb-2">
+                        Escaneie este QR code com o app do seu banco para pagar via PIX
+                      </div>
+                      {msg.file_url && (
+                        <div className="bg-white p-2 rounded border">
+                          <img
+                            src={msg.file_url.startsWith('http') ? msg.file_url : `http://192.168.100.55:8012${msg.file_url}`}
+                            alt="QR Code PIX"
+                            className="w-32 h-32 mx-auto"
+                            onError={(e) => {
+                              e.target.style.display = 'none';
+                              e.target.nextSibling.style.display = 'block';
+                            }}
+                          />
+                          <div className="hidden text-center text-xs text-gray-500">
+                            QR Code PIX (imagem não disponível)
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  
+                  {/* Links de boleto */}
+                  {msg.content && msg.content.includes('🔗') && msg.content.includes('Link do Boleto:') && (
+                    <div className="mb-2 p-3 bg-orange-50 dark:bg-orange-900/20 rounded-lg border border-orange-200 dark:border-orange-800">
+                      <div className="text-sm font-medium text-orange-900 dark:text-orange-100 mb-2">
+                        📄 Boleto Bancário
+                      </div>
+                      <div className="text-xs text-orange-700 dark:text-orange-300 mb-2">
+                        Clique no link abaixo para acessar o boleto completo
+                      </div>
+                      {msg.content.split('\n').map((line, index) => {
+                        if (line.includes('https://')) {
+                          return (
+                            <a
+                              key={index}
+                              href={line.trim()}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="block w-full px-3 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors text-sm text-center"
+                            >
+                              📥 Baixar Boleto PDF
+                            </a>
+                          );
+                        }
+                        return null;
+                      })}
+                    </div>
+                  )}
+                  
+                  {/* Botões interativos (como "Copiar Chave PIX") */}
+                  {msg.additional_attributes?.has_buttons && msg.additional_attributes?.button_choices && (
+                    <div className="mt-3 space-y-2">
+                      {msg.additional_attributes.button_choices.map((choice, index) => {
+                        const [nome, acao] = choice.split('|', 2);
+                        if (acao && acao.startsWith('copy:')) {
+                          const textoParaCopiar = acao.replace('copy:', '');
+                          return (
+                            <button
+                              key={index}
+                              onClick={() => {
+                                navigator.clipboard.writeText(textoParaCopiar);
+                                // Mostrar feedback visual
+                                const btn = event.target;
+                                const originalText = btn.textContent;
+                                btn.textContent = '✅ Copiado!';
+                                btn.className = 'w-full px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium';
+                                setTimeout(() => {
+                                  btn.textContent = originalText;
+                                  btn.className = 'w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium';
+                                }, 2000);
+                              }}
+                              className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
+                            >
+                              {nome}
+                            </button>
+                          );
+                        }
+                        return null;
+                      })}
+                    </div>
+                  )}
+                  
+                  {/* Mensagens especiais de fatura */}
+                  {content && content.includes('💳') && content.includes('Fatura ID:') && (
+                    <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                      <div className="text-sm font-medium text-blue-900 dark:text-blue-100 mb-2">
+                        📋 Detalhes da Fatura
+                      </div>
+                      <div className="text-xs text-blue-700 dark:text-blue-300 space-y-1">
+                        {content.split('\n').map((line, index) => {
+                          if (line.includes('Fatura ID:') || line.includes('Vencimento:') || line.includes('Valor:')) {
+                            return (
+                              <div key={index} className="flex justify-between">
+                                <span className="font-medium">{line.split(':')[0]}</span>
+                                <span>{line.split(':')[1]}</span>
+                              </div>
+                            );
+                          }
+                          return null;
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Conteúdo da mensagem - NÃO mostrar se for mídia pura */}
+                  {content && !hasImage && !hasVideo && !hasAudio && !hasDocument && (
+                    <div className="whitespace-pre-wrap break-words">
+                      {content}
+                  </div>
+                )}
+                
+                  {/* Reações existentes */}
+                  {msg.additional_attributes?.reaction && (
+                    <div className="mt-2 flex items-center space-x-2">
+                      <div className="bg-white/20 rounded-full px-2 py-1 text-xs flex items-center space-x-1">
+                        <span>{msg.additional_attributes.reaction.emoji}</span>
+                        <span className="text-xs opacity-75">
+                          {msg.additional_attributes.reaction.status === 'sent' ? '✓' : '⏳'}
+                        </span>
+                      </div>
+                  </div>
+                  )}
+
+                  {/* Timestamp e ações */}
+                  <div className={`flex items-center justify-between mt-1`}>
+                    <div className={`text-xs ${isCustomer ? 'text-muted-foreground' : 'text-white/70'}`}>
+                      {new Date(msg.created_at || msg.timestamp).toLocaleString('pt-BR', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        day: '2-digit',
+                        month: '2-digit'
+                      })}
+                      {msg.isTemporary && (
+                        <span className="ml-2 opacity-60">Enviando...</span>
                 )}
               </div>
-              <div className={`flex items-center mt-1 space-x-1 text-xs text-muted-foreground ${
-                isCustomer ? 'justify-start' : 'justify-end'
-              }`}>
-                <span>{msg.created_at && new Date(msg.created_at).toLocaleString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
-                
-                {/* Botões de ação para mensagens */}
-                {!msg.is_sending && (
-                  <div className="flex items-center space-x-1 ml-2">
-                    {/* Botão de resposta - para todas as mensagens */}
-                    <button
-                      onClick={() => handleReplyToMessage(msg)}
-                      className="p-1 hover:bg-muted rounded transition-colors"
-                      title="Responder"
-                    >
-                      <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M7.707 3.293a1 1 0 010 1.414L5.414 7H11a7 7 0 017 7v2a1 1 0 11-2 0v-2a5 5 0 00-5-5H5.414l2.293 2.293a1 1 0 11-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clipRule="evenodd" />
-                      </svg>
-                    </button>
                     
-                    {/* Botão de reação - apenas em mensagens recebidas */}
-                    {msg.message_type === 'incoming' && (
+                    {/* Botões de ação (só para mensagens do cliente com external_id) */}
+                    {isCustomer && msg.additional_attributes?.external_id && (
+                      <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
                       <button
                         onClick={() => openReactionPicker(msg)}
-                        className="p-1 hover:bg-muted rounded transition-colors"
-                        title="Reagir"
+                          className="p-1 hover:bg-white/20 rounded-full text-xs"
+                        title="Reagir à mensagem"
                       >
-                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.828 14.828a4 4 0 01-5.656 0M9 10h1m4 0h1m-6 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
+                          😊
                       </button>
-                    )}
-                    
-                    {/* Botão de exclusão - apenas para mensagens enviadas pelo sistema */}
-                    {!isCustomer && (
                       <button
-                        onClick={() => confirmDelete(msg)}
-                        className="p-1 hover:bg-muted rounded transition-colors text-red-400 hover:text-red-300"
-                        title="Apagar mensagem"
-                      >
-                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
+                          onClick={() => handleReplyToMessage(msg)}
+                          className="p-1 hover:bg-white/20 rounded-full text-xs"
+                          title="Responder mensagem"
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M9 17l-5-5 5-5M20 12H4"/>
+                          </svg>
                       </button>
-                    )}
                   </div>
                 )}
-                
-                {/* Exibir reação atual se existir */}
-                {msg.additional_attributes?.reaction?.emoji && (
-                  <span className="ml-1 text-sm">{msg.additional_attributes.reaction.emoji}</span>
-                )}
-                
-                {/* Indicar se a mensagem foi deletada - apenas para mensagens do cliente */}
-                {msg.additional_attributes?.status === 'deleted' && msg.is_from_customer && (
-                  <div className="mt-1 text-xs text-muted-foreground italic">
-                    <span className="line-through">{msg.content}</span>
-                    <br />
-                    <div className="flex items-center gap-1 text-red-500">
-                      <img src="/apagada.png" alt="Mensagem apagada" className="w-4 h-4" />
-                      <span>Esta mensagem foi deletada</span>
                     </div>
-                  </div>
-                )}
               </div>
             </div>
           </div>
             );
-          })
-            )}
+        })}
+        
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Message Input */}
-      <div className="p-4 border-t border-border bg-card">
-        {/* Mostrar mensagem respondida se existir */}
+      {/* Área de resposta */}
         {replyingToMessage && (
-          <div className="mb-3 p-2 bg-[#1a1d23] rounded-lg border-l-4 border-blue-400">
+        <div className="border-t border-border bg-muted/50 p-3">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <svg className="w-4 h-4 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M7.707 3.293a1 1 0 010 1.414L5.414 7H11a7 7 0 017 7v2a1 1 0 11-2 0v-2a5 5 0 00-5-5H5.414l2.293 2.293a1 1 0 11-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clipRule="evenodd" />
-                </svg>
-                <span className="text-sm font-medium text-blue-400">Respondendo a:</span>
+            <div className="flex-1">
+              <div className="text-xs text-muted-foreground mb-1">Respondendo a:</div>
+              <div className="text-sm truncate">
+                {replyingToMessage.content || 'Mensagem'}
+              </div>
               </div>
               <button
                 onClick={cancelReply}
-                className="text-gray-400 hover:text-white transition-colors"
-                title="Cancelar resposta"
+              className="p-1 hover:bg-accent rounded"
               >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
+              ✕
               </button>
             </div>
-            <div className="mt-1 text-sm text-gray-300 truncate">
-              {replyingToMessage.content}
+        </div>
+      )}
+
+      {/* Preview de áudio gravado */}
+      {audioUrl && (
+        <div className="border-t border-border bg-muted/50 p-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <div className="text-sm font-medium">Áudio gravado</div>
+              <audio controls src={audioUrl} className="h-8" />
+            </div>
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={sendAudioMessage}
+                disabled={sendingMedia}
+                className="px-3 py-1 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:opacity-50 text-sm"
+              >
+                {sendingMedia ? 'Enviando...' : 'Enviar'}
+              </button>
+              <button
+                onClick={() => {
+                  setAudioBlob(null);
+                  setAudioUrl(null);
+                  setRecordingTime(0);
+                }}
+                className="px-3 py-1 bg-red-500 text-white rounded-lg hover:bg-red-600 text-sm"
+              >
+                Cancelar
+              </button>
+            </div>
             </div>
           </div>
         )}
         
-        <div className="flex items-end space-x-2">
+      {/* Input de mensagem */}
+      <div className="border-t border-border p-4 bg-card">
+        <div className="flex items-center space-x-2">
+          {/* Upload de arquivo */}
           <input
             type="file"
-            id="file-input"
+            id="file-upload"
             className="hidden"
-            accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.zip,.rar,.jpg,.jpeg,.png,.gif,.webp,.bmp,.svg,.mp4,.avi,.mov,.wmv,.flv,.mkv,.webm,.mp3,.wav,.ogg,.m4a,.aac,.flac"
-            multiple={false}
-            onChange={(e) => {
-              const file = e.target.files[0];
-              if (file) {
-                console.log(' Arquivo selecionado:', file);
-                console.log(' Nome do arquivo:', file.name);
-                console.log(' Tipo do arquivo:', file.type);
-                console.log(' Tamanho do arquivo:', file.size);
-                
-                // Determinar o tipo de mídia baseado na extensão
-                const extension = file.name.split('.').pop().toLowerCase();
-                let mediaType = 'document';
-                
-                if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg'].includes(extension)) {
-                  mediaType = 'image';
-                } else if (['mp4', 'avi', 'mov', 'wmv', 'flv', 'mkv', 'webm'].includes(extension)) {
-                  mediaType = 'video';
-                } else if (['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac'].includes(extension)) {
-                  mediaType = 'audio';
-                }
-                
-                console.log(' Tipo de mídia detectado:', mediaType);
-                
-                // Enviar mídia automaticamente sem modal
-                console.log('🚀 Enviando mídia automaticamente:', file.name);
-                handleSendMedia(file, mediaType, '');
-              } else {
-                console.log(' Nenhum arquivo selecionado');
-              }
-              e.target.value = ''; // Limpar o input
-            }}
-            onClick={(e) => {
-              console.log('🖱️ Input de arquivo clicado');
-            }}
+            onChange={handleFileUpload}
+            accept="image/*,video/*,audio/*,.pdf,.doc,.docx"
           />
           <button 
-            onClick={() => {
-              console.log(' Botão clipe clicado');
-              const fileInput = document.getElementById('file-input');
-              if (fileInput) {
-                console.log(' Abrindo seletor de arquivo...');
-                fileInput.click();
-              } else {
-                console.error(' Input de arquivo não encontrado');
-              }
-            }}
-            className="p-2 text-muted-foreground hover:text-card-foreground transition-colors"
-            title="Anexar arquivo"
+            onClick={() => document.getElementById('file-upload').click()}
+            disabled={sendingMedia}
+            className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors disabled:opacity-50"
+            title="Enviar arquivo"
           >
-            <Paperclip className="w-4 h-4" />
+            <Paperclip className="w-5 h-5" />
           </button>
           
+          {/* Input de texto */}
           <div className="flex-1 relative">
-            {!isRecording && !audioBlob ? (
-              <>
             <textarea
               id="message-input"
               value={message}
               onChange={(e) => setMessage(e.target.value)}
               onKeyPress={handleKeyPress}
-              onPaste={(e) => {
-                const items = e.clipboardData.items;
-                for (let i = 0; i < items.length; i++) {
-                  if (items[i].type.indexOf('image') !== -1) {
-                    const file = items[i].getAsFile();
-                    console.log('📋 Imagem colada:', file);
-                    
-                    // Determinar tipo de mídia
-                    let mediaType = 'image';
-                    if (file.type.includes('video')) {
-                      mediaType = 'video';
-                    } else if (file.type.includes('audio')) {
-                      mediaType = 'audio';
-                    }
-                    
-                    // Enviar mídia automaticamente sem modal
-                    console.log('🚀 Enviando mídia colada automaticamente:', file.name);
-                    handleSendMedia(file, mediaType, '');
-                    e.preventDefault();
-                    return;
-                  }
-                }
-              }}
               placeholder="Digite sua mensagem..."
-              className="niochat-input min-h-[40px] max-h-32 resize-none pr-10"
+              className="w-full resize-none rounded-lg border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
               rows={1}
+              style={{
+                minHeight: '40px',
+                maxHeight: '120px',
+                height: 'auto'
+              }}
+              onInput={(e) => {
+                e.target.style.height = 'auto';
+                e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
+              }}
             />
-              </>
-            ) : isRecording ? (
-              <div className="flex items-center justify-between p-3 bg-gradient-to-r from-red-50 to-pink-50 border border-red-200 rounded-lg shadow-sm">
-                <div className="flex items-center space-x-3">
-                  <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
-                  <span className="text-sm font-medium text-red-700">
-                    Gravando... {formatRecordingTime(recordingTime)}
-                  </span>
           </div>
-                <button
-                  onClick={stopRecording}
-                  className="p-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors shadow-sm"
-                  title="Parar gravação"
-                >
-                  <Square className="w-4 h-4" />
-                </button>
-              </div>
-            ) : audioBlob ? (
-              <div className="flex items-center justify-between p-3 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg shadow-sm">
-                <div className="flex items-center space-x-3 flex-1">
-                  {/* Player de áudio para prévia */}
-                  <button
-                    onClick={() => {
-                      if (audioUrl) {
-                        const audio = new Audio(audioUrl);
-                        audio.play().catch(e => console.error('Erro ao reproduzir prévia:', e));
-                      }
-                    }}
-                    className="flex items-center justify-center w-8 h-8 bg-blue-500 text-white rounded-full hover:bg-blue-600 transition-colors"
-                    title="Reproduzir prévia"
-                  >
-                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
-                    </svg>
-                  </button>
-                  
-                  <div className="flex-1">
+
+          {/* Botão de gravação/envio */}
+          {isRecording ? (
                     <div className="flex items-center space-x-2">
-                      <svg className="w-4 h-4 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M9.383 3.076A1 1 0 0110 4v12a1 1 0 01-1.617.793L4.5 13.5H2a1 1 0 01-1-1v-5a1 1 0 011-1h2.5l3.883-3.793a1 1 0 011.617.793z" clipRule="evenodd" />
-                      </svg>
-                      <span className="text-sm font-medium text-blue-700">
-                        Áudio gravado ({formatRecordingTime(recordingTime)})
-                      </span>
+              <div className="text-sm text-red-500 font-mono">
+                {formatRecordingTime(recordingTime)}
                     </div>
-                    <div className="w-full bg-blue-200 rounded-full h-1 mt-1">
-                      <div className="bg-blue-500 h-1 rounded-full" style={{ width: '100%' }}></div>
-                    </div>
-                  </div>
-                </div>
-                
-                <div className="flex space-x-2">
           <button
                     onClick={cancelRecording}
-                    className="p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
+                className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-950 rounded-lg transition-colors"
                     title="Cancelar gravação"
                   >
-                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                    </svg>
+                <Square className="w-5 h-5" />
                   </button>
                   <button
-                    onClick={sendAudioMessage}
-                    disabled={sendingMedia}
-                    className={`p-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors ${sendingMedia ? 'opacity-50 cursor-not-allowed' : ''}`}
-                    title="Enviar áudio"
-                  >
-                    {sendingMedia ? (
-                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                    ) : (
-                      <Send className="w-4 h-4" />
-                    )}
+                onClick={stopRecording}
+                className="p-2 text-green-500 hover:bg-green-50 dark:hover:bg-green-950 rounded-lg transition-colors"
+                title="Parar gravação"
+              >
+                <MicOff className="w-5 h-5" />
                   </button>
                 </div>
-              </div>
-            ) : null}
-          </div>
-          
-          {!isRecording && !audioBlob ? (
+          ) : (
             <button
               onClick={message.trim() ? handleSendMessage : startRecording}
               disabled={sendingMedia}
-            className={`p-2 rounded-lg transition-colors ${
-              message.trim()
-                ? 'bg-primary text-primary-foreground hover:bg-primary/90'
-                  : 'bg-primary text-primary-foreground hover:bg-primary/90'
-              } ${sendingMedia ? 'opacity-50 cursor-not-allowed' : ''}`}
+              className="p-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-lg transition-colors disabled:opacity-50"
               title={message.trim() ? "Enviar mensagem" : "Gravar áudio"}
           >
               {sendingMedia ? (
-                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                <div className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin" />
               ) : message.trim() ? (
             <Send className="w-5 h-5" />
               ) : (
                 <Mic className="w-5 h-5" />
               )}
           </button>
-          ) : null}
-        </div>
-        
-        <div className="flex items-center justify-between mt-2 text-xs text-muted-foreground">
-          <span>
-            {!isRecording && !audioBlob 
-              ? "Pressione Enter para enviar, Shift + Enter para nova linha, ou clique no microfone para gravar áudio"
-              : isRecording 
-              ? "Gravando áudio... Clique no quadrado para parar"
-              : "Áudio gravado. Clique no play para ouvir, no ícone de envio para enviar ou no X para cancelar"
-            }
-          </span>
-          <span>Online</span>
+          )}
         </div>
       </div>
 
-      {/* Modal de Transferência */}
-      <Dialog open={showTransferDropdown} onOpenChange={setShowTransferDropdown}>
-        <DialogContent className="max-w-md w-full">
+      {/* Modal de transferência */}
+      {showTransferDropdown && (
+        <Dialog open={showTransferDropdown} onOpenChange={setShowTransferDropdown}>
+          <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>
-              Transferir Atendimento <span className="font-bold">{conversation?.contact?.name}</span>
-            </DialogTitle>
+              <DialogTitle>Transferir Atendimento</DialogTitle>
           </DialogHeader>
-          <div className="divide-y">
-            {loadingAgents ? (
-              <div className="text-muted-foreground text-center py-8">Carregando usuários...</div>
-            ) : agents.length === 0 ? (
-              <div className="text-muted-foreground text-center py-8">Nenhum usuário encontrado.</div>
-            ) : (
-              agents.map((agent) => {
-                // Usar status em tempo real se disponível, senão usar o status do backend
-                const isOnline = agentsStatus[agent.id] !== undefined 
-                  ? agentsStatus[agent.id] 
-                  : agent.is_online;
-                
-                // Mostrar nome completo ou username se não tiver nome
-                const displayName = agent.first_name && agent.last_name 
-                  ? `${agent.first_name} ${agent.last_name}`
-                  : agent.first_name 
-                  ? agent.first_name
-                  : agent.username || agent.email;
-                
-                return (
-                  <button
+            <div className="space-y-2 max-h-60 overflow-y-auto">
+              {agents.length === 0 ? (
+                <p className="text-muted-foreground text-center py-4">
+                  Nenhum atendente disponível
+                </p>
+              ) : (
+                agents.map((agent) => (
+              <button
                     key={agent.id}
-                    className="flex items-center w-full gap-4 py-3 px-2 hover:bg-muted transition"
                     onClick={() => handleTransferToAgent(agent.id)}
+                    className="w-full text-left p-3 hover:bg-accent rounded-lg transition-colors flex items-center justify-between"
                   >
-                    <img
-                      src={agent.avatar || '/avatar-em-branco.png'}
-                      alt={displayName}
-                      className="w-12 h-12 rounded-full object-cover bg-muted"
-                    />
-                    <div className="flex-1 text-left">
-                      <div className="font-medium text-card-foreground">{displayName}</div>
-                      <span className={`inline-block text-xs px-2 py-0.5 rounded-full mt-1 ${
-                        isOnline ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                      }`}>
-                        {isOnline ? 'Online' : 'Offline'}
-                      </span>
+                    <div className="flex items-center space-x-3">
+                      <div className="relative">
+                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-medium text-sm">
+                          {(agent.first_name || agent.username || 'U').charAt(0).toUpperCase()}
+            </div>
+                        <div className={`absolute -bottom-1 -right-1 w-3 h-3 rounded-full border-2 border-background ${
+                          agentsStatus[agent.id] ? 'bg-green-500' : 'bg-gray-400'
+                        }`} />
+                      </div>
+                      <div>
+                        <div className="font-medium">
+                          {agent.first_name || agent.username}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {agentsStatus[agent.id] ? 'Online' : 'Offline'}
+                        </div>
+                      </div>
                     </div>
                   </button>
-                );
-              })
-            )}
+                ))
+              )}
           </div>
         </DialogContent>
       </Dialog>
+      )}
 
-      {/* Modal de Visualização de Imagem */}
+      {/* Modal de imagem */}
+      {showImageModal && selectedImage && (
       <Dialog open={showImageModal} onOpenChange={setShowImageModal}>
-        <DialogPortal>
-          <DialogOverlay />
-          <DialogPrimitive.Content
-            className="bg-transparent data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-full max-w-4xl translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border-0 p-0 shadow-lg duration-200"
-          >
-            <div className="relative">
-              <button
-                onClick={() => setShowImageModal(false)}
-                className="absolute top-4 right-4 z-10 bg-black/50 text-white rounded-full p-2 hover:bg-black/70 transition-colors"
-              >
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-              {selectedImage && (
+          <DialogContent className="max-w-4xl max-h-[90vh]">
+            <div className="flex items-center justify-center">
                 <img
                   src={selectedImage}
-                  alt="Imagem em tamanho completo"
-                  className="w-full h-auto max-h-[80vh] object-contain"
-                  onClick={(e) => e.stopPropagation()}
+                alt="Imagem ampliada"
+                className="max-w-full max-h-[80vh] object-contain"
                 />
+            </div>
+          </DialogContent>
+      </Dialog>
+      )}
+
+      {/* Modal de Seleção de Reações */}
+      {showReactionPicker && selectedMessageForReaction && (
+        <Dialog open={showReactionPicker} onOpenChange={setShowReactionPicker}>
+          <DialogContent className="sm:max-w-md">
+            <div className="flex flex-col space-y-4">
+              <div>
+                <h3 className="text-lg font-semibold">Escolha uma reação</h3>
+                <p className="text-sm text-muted-foreground">
+                  Reaja à mensagem: "{selectedMessageForReaction.content?.slice(0, 50)}..."
+                </p>
+              </div>
+              
+              {/* Grid de emojis */}
+              <div className="grid grid-cols-6 gap-2">
+                {['👍', '👎', '❤️', '😂', '😮', '😢', '😡', '🤩', '🔥', '👏', '💯', '🎉', '😘', '🥰', '😍', '🤗', '🙌', '✨'].map((emoji) => (
+                  <button
+                    key={emoji}
+                    onClick={() => sendReaction(selectedMessageForReaction.id, emoji)}
+                    className="p-3 text-2xl hover:bg-accent rounded-lg transition-colors flex items-center justify-center"
+                    title={`Reagir com ${emoji}`}
+                  >
+                    {emoji}
+                  </button>
+                ))}
+                    </div>
+              
+              {/* Botão para remover reação */}
+              {selectedMessageForReaction.additional_attributes?.reaction && (
+                <div className="border-t pt-4">
+                  <button
+                    onClick={() => sendReaction(selectedMessageForReaction.id, '')}
+                    className="w-full p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                  >
+                    Remover reação
+                  </button>
+                </div>
               )}
-            </div>
-          </DialogPrimitive.Content>
-        </DialogPortal>
-      </Dialog>
-
-      {/* Modal de Seletor de Reação */}
-      <Dialog open={showReactionPicker} onOpenChange={setShowReactionPicker}>
-        <DialogContent className="max-w-sm w-full">
-          <DialogHeader>
-            <DialogTitle>Reagir à mensagem</DialogTitle>
-          </DialogHeader>
-          <div className="grid grid-cols-6 gap-2 p-4">
-            {['👍', '❤️', '😂', '😮', '😢', '😡', '👏', '🙏', '🔥', '💯', '✨', '🎉'].map((emoji) => (
-              <button
-                key={emoji}
-                onClick={() => sendReaction(selectedMessageForReaction?.id, emoji)}
-                className="text-2xl p-2 hover:bg-muted rounded-lg transition-colors"
-              >
-                {emoji}
-              </button>
-            ))}
-            <button
-              onClick={() => sendReaction(selectedMessageForReaction?.id, '')}
-              className="text-sm p-2 hover:bg-muted rounded-lg transition-colors text-muted-foreground"
-            >
-              Remover
-            </button>
+              
+              {/* Botões de ação */}
+              <div className="flex justify-end space-x-2 pt-4 border-t">
+                <button
+                  onClick={() => setShowReactionPicker(false)}
+                  className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-accent transition-colors"
+                >
+                  Cancelar
+                </button>
+              </div>
           </div>
         </DialogContent>
       </Dialog>
-
-      {/* Modal de Confirmação de Exclusão */}
-      <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
-        <DialogContent className="max-w-sm w-full">
-          <DialogHeader>
-            <DialogTitle>Confirmar exclusão</DialogTitle>
-          </DialogHeader>
-          <div className="p-4">
-            <p className="text-muted-foreground mb-4">
-              Tem certeza que deseja apagar esta mensagem? Esta ação não pode ser desfeita.
-            </p>
-            <div className="flex justify-end space-x-2">
-              <button
-                onClick={() => setShowDeleteConfirm(false)}
-                className="px-4 py-2 text-sm text-muted-foreground hover:text-card-foreground transition-colors"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={() => deleteMessage(messageToDelete?.id)}
-                className="px-4 py-2 text-sm bg-red-500 text-white rounded hover:bg-red-600 transition-colors"
-              >
-                Apagar
-              </button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
+      )}
     </div>
   );
 };
 
 export default ChatArea;
-

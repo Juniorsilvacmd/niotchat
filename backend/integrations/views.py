@@ -444,6 +444,11 @@ def evolution_webhook(request):
             if not provedor:
                 return JsonResponse({'error': 'Nenhum provedor encontrado'}, status=400)
             
+            # Verificar se o provedor está suspenso
+            if provedor.status == 'suspenso':
+                print(f"Provedor {provedor.nome} está suspenso - bloqueando webhook")
+                return JsonResponse({'error': 'Provedor suspenso'}, status=403)
+            
             # 2. Buscar ou criar contato
             contact, created = Contact.objects.get_or_create(
                 phone=phone,
@@ -579,6 +584,19 @@ def evolution_webhook(request):
             
             print(f"DEBUG: Nova mensagem salva: {msg.id} - {content[:30]}...")
             
+            # SALVAR MENSAGEM DO CLIENTE NO REDIS
+            try:
+                from core.redis_memory_service import redis_memory_service
+                redis_memory_service.add_message_to_conversation_sync(
+                    provedor_id=provedor.id,
+                    conversation_id=conversation.id,
+                    sender='customer',
+                    content=content or '',
+                    message_type=db_message_type
+                )
+            except Exception as e:
+                logger.warning(f"Erro ao salvar mensagem do cliente no Redis: {e}")
+            
             # Emitir evento WebSocket para mensagem recebida
             channel_layer = get_channel_layer()
             from conversations.serializers import MessageSerializer
@@ -676,6 +694,19 @@ def evolution_webhook(request):
                         resposta_preview = str(resposta_ia)[:30] if resposta_ia else "sem resposta"
                         print(f"DEBUG: Resposta IA enviada: {msg_out.id} - {resposta_preview}...")
                         
+                        # SALVAR MENSAGEM DA IA NO REDIS
+                        try:
+                            from core.redis_memory_service import redis_memory_service
+                            redis_memory_service.add_message_to_conversation_sync(
+                                provedor_id=provedor.id,
+                                conversation_id=conversation.id,
+                                sender='ai',
+                                content=resposta_ia,
+                                message_type='text'
+                            )
+                        except Exception as e:
+                            logger.warning(f"Erro ao salvar mensagem da IA no Redis: {e}")
+                        
                         # Emitir evento WebSocket para mensagem enviada
                         async_to_sync(channel_layer.group_send)(
                             f"conversation_{conversation.id}",
@@ -745,16 +776,50 @@ def webhook_evolution_uazapi(request):
         
         print(f"DEBUG: Buscando provedor para instance: {instance}")
         
-        # Buscar provedor com credenciais da Uazapi
-        provedor = Provedor.objects.filter(
+        # Buscar provedor CORRETO baseado na instance/owner
+        # A instance/owner deve corresponder ao número conectado do provedor
+        provedor = None
+        
+        # Buscar todos os provedores com credenciais da Uazapi
+        provedores = Provedor.objects.filter(
             integracoes_externas__whatsapp_token__isnull=False
-        ).first()
+        )
+        
+        print(f"DEBUG: Provedores encontrados com credenciais: {[p.nome for p in provedores]}")
+        
+        # Buscar o provedor correto baseado na instance
+        for p in provedores:
+            # Verificar se a instance corresponde ao número conectado do provedor
+            provedor_instance = p.integracoes_externas.get('whatsapp_instance')
+            if provedor_instance and clean_instance == provedor_instance.replace('@s.whatsapp.net', '').replace('@c.us', ''):
+                provedor = p
+                print(f"DEBUG: Provedor CORRETO encontrado: {provedor.nome} (instance: {provedor_instance})")
+                break
+        
+        # Se não encontrar por instance, tentar por token
+        if not provedor:
+            for p in provedores:
+                uazapi_token = p.integracoes_externas.get('whatsapp_token')
+                if uazapi_token and uazapi_token in str(data):
+                    provedor = p
+                    print(f"DEBUG: Provedor encontrado por token: {provedor.nome}")
+                    break
+        
+        # Se ainda não encontrar, usar o primeiro (fallback)
+        if not provedor:
+            provedor = provedores.first()
+            print(f"DEBUG: Usando provedor fallback: {provedor.nome}")
         
         if not provedor:
-            print(" DEBUG: Nenhum provedor com credenciais da Uazapi encontrado")
+            print("DEBUG: Nenhum provedor com credenciais da Uazapi encontrado")
             return JsonResponse({'error': 'Nenhum provedor com credenciais da Uazapi encontrado'}, status=400)
         
-        print(f"DEBUG: Provedor encontrado: {provedor.nome}")
+        # Verificar se o provedor está suspenso
+        if provedor.status == 'suspenso':
+            print(f"Provedor {provedor.nome} está suspenso - bloqueando webhook Uazapi")
+            return JsonResponse({'error': 'Provedor suspenso'}, status=403)
+        
+        print(f"DEBUG: Provedor final selecionado: {provedor.nome}")
         
         # Buscar token e url da UazAPI do provedor
         uazapi_token = provedor.integracoes_externas.get('whatsapp_token')
@@ -764,7 +829,7 @@ def webhook_evolution_uazapi(request):
             print(" DEBUG: Token ou URL não configurados no provedor")
             return JsonResponse({'error': 'Token ou URL não configurados no provedor'}, status=400)
         
-        print(f"DEBUG: Token do provedor: {uazapi_token[:10]}...")
+        # Sensitive data log removed for security
         print(f"DEBUG: URL do provedor: {uazapi_url}")
         
         # Verificar e normalizar o número usando /chat/check
@@ -1159,7 +1224,7 @@ def webhook_evolution_uazapi(request):
                     
                     print(f"DEBUG: Buscando foto do perfil para contato existente: {chatid_clean}")
                     print(f"DEBUG: URL: {chat_details_url}")
-                    print(f"DEBUG: Token: {uazapi_token[:10]}...")
+                    # Sensitive data log removed for security
                     
                     import requests as http_requests
                     response = http_requests.post(
@@ -1232,7 +1297,7 @@ def webhook_evolution_uazapi(request):
                     
                     print(f"DEBUG: Buscando foto do perfil para: {chatid_clean}")
                     print(f"DEBUG: URL: {chat_details_url}")
-                    print(f"DEBUG: Token: {uazapi_token[:10]}...")
+                    # Sensitive data log removed for security
                     
                     import requests as http_requests
                     response = http_requests.post(
@@ -1508,7 +1573,7 @@ def webhook_evolution_uazapi(request):
                                                         additional_attrs['file_path'] = mp3_path
                                                         additional_attrs['file_size'] = os.path.getsize(mp3_path)
                                                         # Usar URL pública acessível
-                                                        additional_attrs['local_file_url'] = f"/api/media/messages/{conversation.id}/{mp3_filename}"
+                                                        additional_attrs['local_file_url'] = f"/api/media/messages/{conversation.id}/{mp3_filename}/"
                                                         print(f"DEBUG: Arquivo MP3 criado")
                                                     else:
                                                         print(f"DEBUG: Erro na conversão para MP3")
@@ -1520,7 +1585,7 @@ def webhook_evolution_uazapi(request):
                                                 additional_attrs['file_path'] = file_path
                                                 additional_attrs['file_size'] = len(file_response.content)
                                                 # Usar URL pública acessível
-                                                additional_attrs['local_file_url'] = f"/api/media/messages/{conversation.id}/{filename}"
+                                                additional_attrs['local_file_url'] = f"/api/media/messages/{conversation.id}/{filename}/"
 
                                             print(f"DEBUG: Arquivo baixado e salvo localmente")
                                         else:
@@ -1553,8 +1618,8 @@ def webhook_evolution_uazapi(request):
         
         if existing_message:
             content_preview = content[:30] if content else "sem conteúdo"
-            print(f"  Mensagem duplicada ignorada: {content_preview}...")
-            return JsonResponse({'status': 'ignored_duplicate'}, status=200)
+            print(f"  Mensagem duplicada detectada: {content_preview}... - Mas continuando para processar IA")
+            # Não retornar aqui, continuar para processar a IA
         
         # Adicionar informações de resposta se for uma mensagem respondida
         print(f"DEBUG: Verificando se é mensagem respondida:")
@@ -1608,11 +1673,19 @@ def webhook_evolution_uazapi(request):
         
         print(f"DEBUG: db_message_type final: {db_message_type}")
         
+        # Extrair dados de mídia dos additional_attrs
+        file_url_value = additional_attrs.get('local_file_url') or additional_attrs.get('file_url')
+        file_name_value = additional_attrs.get('file_name')
+        file_size_value = additional_attrs.get('file_size')
+        
         msg = Message.objects.create(
             conversation=conversation,
             message_type=db_message_type,
             content=content or '',
             is_from_customer=is_from_customer,  # Usar a variável controlada
+            file_url=file_url_value,
+            file_name=file_name_value,
+            file_size=file_size_value,
             additional_attributes=additional_attrs,
             created_at=timezone.now()
         )
@@ -1621,11 +1694,24 @@ def webhook_evolution_uazapi(request):
         if file_url:
             print(f"DEBUG: Mensagem com mídia - file_url: {file_url}")
         
+        # SALVAR MENSAGEM NO REDIS (UAZAPI WEBHOOK)
+        try:
+            from core.redis_memory_service import redis_memory_service
+            sender_type = 'customer' if is_from_customer else 'agent'
+            redis_memory_service.add_message_to_conversation_sync(
+                provedor_id=provedor.id,
+                conversation_id=conversation.id,
+                sender=sender_type,
+                content=content or '',
+                message_type=db_message_type
+            )
+        except Exception as e:
+            logger.warning(f"Erro ao salvar mensagem no Redis: {e}")
+        
         # Emitir evento WebSocket para a conversa específica
         channel_layer = get_channel_layer()
         from conversations.serializers import MessageSerializer
         message_data = MessageSerializer(msg).data
-        print(f"DEBUG: Enviando mensagem via WebSocket: {message_data}")
         
         async_to_sync(channel_layer.group_send)(
             f'conversation_{conversation.id}',
@@ -1649,11 +1735,8 @@ def webhook_evolution_uazapi(request):
                 }
             }
         )
+        
         # 1. Acionar IA para resposta automática
-        print(f"🔍 DEBUG: Verificando conteúdo antes da IA:")
-        print(f"🔍 DEBUG: content = '{content}' (tipo: {type(content)})")
-        print(f"🔍 DEBUG: content is None: {content is None}")
-        print(f"🔍 DEBUG: content == '': {content == ''}")
         
         if content and str(content).strip():  # Verificar se há conteúdo válido antes de chamar a IA
             print(f"🤖 IA: Acionando IA para mensagem: {content[:50]}...")
@@ -1730,6 +1813,19 @@ def webhook_evolution_uazapi(request):
                     )
                     resposta_preview = str(resposta_ia)[:30] if resposta_ia else "sem resposta"
                     print(f"DEBUG: Mensagem da IA salva: {msg_ia.id} - Conversa: {conversation.id}, Contato: {contact.name} - {resposta_preview}...")
+                    
+                    # SALVAR MENSAGEM DA IA NO REDIS (UAZAPI WEBHOOK)
+                    try:
+                        from core.redis_memory_service import redis_memory_service
+                        redis_memory_service.add_message_to_conversation_sync(
+                            provedor_id=provedor.id,
+                            conversation_id=conversation.id,
+                            sender='ai',
+                            content=resposta_ia,
+                            message_type='text'
+                        )
+                    except Exception as e:
+                        logger.warning(f"Erro ao salvar mensagem da IA no Redis: {e}")
                     
                     # Emitir evento WebSocket para mensagem da IA
                     async_to_sync(channel_layer.group_send)(

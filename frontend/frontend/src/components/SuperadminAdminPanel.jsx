@@ -5,7 +5,6 @@ import { useNavigate } from 'react-router-dom';
 const MODELS = [
   { key: 'empresas', label: 'Empresas', icon: <Building className="w-6 h-6" /> },
   { key: 'usuarios-sistema', label: 'Usuários', icon: <Users className="w-6 h-6" /> },
-  { key: 'configuracoes', label: 'Configurações do Sistema', icon: <Settings className="w-6 h-6" /> },
   { key: 'auditoria', label: 'Auditoria', icon: <Eye className="w-6 h-6" /> },
   // Adicione outros modelos importantes aqui
 ];

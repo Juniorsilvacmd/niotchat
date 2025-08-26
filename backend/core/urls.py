@@ -11,6 +11,7 @@ router.register(r'companies', views.CompanyViewSet)
 router.register(r'company-users', views.CompanyUserViewSet)
 router.register(r'system-config', views.SystemConfigViewSet, basename='system-config')
 router.register(r'audit-logs', views.AuditLogViewSet)
+router.register(r'mensagens-sistema', views.MensagemSistemaViewSet)
 
 urlpatterns = [
     path('', include(router.urls)),
@@ -20,6 +21,7 @@ urlpatterns = [
     path('auth/reset-password/', views.ResetPasswordView.as_view(), name='auth_reset_password'),
     path('users/list/', views.UserListView.as_view(), name='users_list'),
     path('dashboard/stats/', views.DashboardStatsView.as_view(), name='dashboard_stats'),
+    path('dashboard/response-time-hourly/', views.DashboardResponseTimeHourlyView.as_view(), name='dashboard_response_time_hourly'),
     path('atendimento/ia/', views.AtendimentoIAView.as_view(), name='atendimento_ia'),
 
     # Removido para evitar conflito com conversations.urls

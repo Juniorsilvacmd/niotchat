@@ -1,6 +1,6 @@
 import requests
 from rest_framework import serializers
-from .models import Canal, Provedor, Label, User, AuditLog, SystemConfig, Company, CompanyUser
+from .models import Canal, Provedor, Label, User, AuditLog, SystemConfig, Company, CompanyUser, MensagemSistema
 
 class ProvedorSerializer(serializers.ModelSerializer):
     sgp_url = serializers.SerializerMethodField()
@@ -477,3 +477,89 @@ class CanalSerializer(serializers.ModelSerializer):
                     data['betaStatus'] = None
         
         return data
+
+class MensagemSistemaSerializer(serializers.ModelSerializer):
+    provedores_detalhados = serializers.SerializerMethodField()
+    visualizacoes_detalhadas = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = MensagemSistema
+        fields = [
+            'id', 'assunto', 'mensagem', 'tipo', 'provedores', 
+            'provedores_count', 'visualizacoes', 'visualizacoes_count',
+            'provedores_detalhados', 'visualizacoes_detalhadas',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'provedores_count', 'visualizacoes', 'visualizacoes_count', 'created_at', 'updated_at']
+    
+    def get_provedores_detalhados(self, obj):
+        """Retorna lista de provedores com nomes"""
+        from .models import Provedor
+        provedores = []
+        for provedor_id in obj.provedores:
+            try:
+                provedor = Provedor.objects.get(id=provedor_id)
+                provedores.append({
+                    'id': provedor.id,
+                    'nome': provedor.nome,
+                    'visualizado': str(provedor.id) in obj.visualizacoes
+                })
+            except Provedor.DoesNotExist:
+                provedores.append({
+                    'id': provedor_id,
+                    'nome': f'Provedor {provedor_id} (não encontrado)',
+                    'visualizado': False
+                })
+        return provedores
+    
+    def get_visualizacoes_detalhadas(self, obj):
+        """Retorna detalhes das visualizações com nomes dos provedores"""
+        from .models import Provedor
+        visualizacoes = []
+        for provedor_id, dados in obj.visualizacoes.items():
+            try:
+                provedor = Provedor.objects.get(id=int(provedor_id))
+                
+                # Verificar se dados é string (formato antigo) ou objeto (formato novo)
+                if isinstance(dados, str):
+                    # Formato antigo: string com timestamp
+                    visualizacoes.append({
+                        'provedor_id': int(provedor_id),
+                        'provedor_nome': provedor.nome,
+                        'user_id': None,
+                        'username': 'Usuário não identificado',
+                        'timestamp': dados
+                    })
+                else:
+                    # Formato novo: objeto com detalhes
+                    visualizacoes.append({
+                        'provedor_id': int(provedor_id),
+                        'provedor_nome': provedor.nome,
+                        'user_id': dados.get('user_id'),
+                        'username': dados.get('username'),
+                        'timestamp': dados.get('timestamp')
+                    })
+            except (Provedor.DoesNotExist, ValueError):
+                if isinstance(dados, str):
+                    visualizacoes.append({
+                        'provedor_id': provedor_id,
+                        'provedor_nome': f'Provedor {provedor_id} (não encontrado)',
+                        'user_id': None,
+                        'username': 'Usuário não identificado',
+                        'timestamp': dados
+                    })
+                else:
+                    visualizacoes.append({
+                        'provedor_id': provedor_id,
+                        'provedor_nome': f'Provedor {provedor_id} (não encontrado)',
+                        'user_id': dados.get('user_id'),
+                        'username': dados.get('username'),
+                        'timestamp': dados.get('timestamp')
+                    })
+        return visualizacoes
+    
+    def create(self, validated_data):
+        # Calcula o número de provedores
+        provedores = validated_data.get('provedores', [])
+        validated_data['provedores_count'] = len(provedores)
+        return super().create(validated_data)

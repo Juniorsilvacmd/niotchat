@@ -8,6 +8,7 @@ from rest_framework.authtoken.models import Token as AuthToken
 from django.contrib.auth import get_user_model
 from django.contrib.auth.signals import user_logged_in, user_logged_out
 from django.utils.deprecation import MiddlewareMixin
+from django.utils import timezone
 
 
 class User(AbstractUser):
@@ -56,6 +57,17 @@ class User(AbstractUser):
         default=list,
         blank=True,
         verbose_name='Permissões Específicas'
+    )
+    
+    # Campo para provedor (para agentes)
+    provedor = models.ForeignKey(
+        'Provedor',
+        on_delete=models.CASCADE,
+        related_name='users',
+        verbose_name='Provedor',
+        null=True,
+        blank=True,
+        help_text='Provedor ao qual o usuário pertence'
     )
     
     created_at = models.DateTimeField(auto_now_add=True)
@@ -321,6 +333,21 @@ class Provedor(models.Model):
     documentos_necessarios = models.TextField(blank=True, null=True, help_text="Documentos necessários para contratação")
     observacoes = models.TextField(blank=True, null=True, help_text="Observações adicionais")
     is_active = models.BooleanField(default=True, verbose_name='Ativo')
+    
+    # Status do provedor
+    STATUS_CHOICES = [
+        ('ativo', 'Ativo'),
+        ('suspenso', 'Suspenso'),
+    ]
+    status = models.CharField(
+        max_length=20, 
+        choices=STATUS_CHOICES, 
+        default='ativo',
+        verbose_name='Status'
+    )
+    data_suspensao = models.DateTimeField(blank=True, null=True, verbose_name='Data de Suspensão')
+    motivo_suspensao = models.TextField(blank=True, null=True, verbose_name='Motivo da Suspensão')
+    
     # Configurações de IA avançadas
     ferramentas_ia = models.JSONField(blank=True, null=True, help_text="Ferramentas personalizadas para o agente IA")
     fluxo_atendimento = models.JSONField(blank=True, null=True, help_text="Fluxo de atendimento personalizado para o agente IA")
@@ -389,6 +416,64 @@ class Canal(models.Model):
         return f"{self.get_tipo_display()} - {self.nome or self.email or self.url or 'Sem nome'}"
 
 
+class MensagemSistema(models.Model):
+    TIPO_CHOICES = [
+        ('notificacao', 'Notificação'),
+        ('aviso', 'Aviso'),
+        ('manutencao', 'Manutenção'),
+    ]
+    
+    assunto = models.CharField(max_length=200)
+    mensagem = models.TextField()
+    tipo = models.CharField(max_length=20, choices=TIPO_CHOICES, default='notificacao')
+    provedores = models.JSONField(default=list)  # Lista de IDs dos provedores
+    provedores_count = models.IntegerField(default=0)
+    visualizacoes = models.JSONField(default=dict)  # {user_id: timestamp}
+    visualizacoes_count = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'Mensagem do Sistema'
+        verbose_name_plural = 'Mensagens do Sistema'
+    
+    def __str__(self):
+        return f"{self.assunto} - {self.created_at.strftime('%d/%m/%Y %H:%M')}"
+    
+    def marcar_visualizada(self, user_id):
+        """Marca mensagem como visualizada por um usuário (baseado no provedor)"""
+        from .models import User, Provedor
+        
+        try:
+            user = User.objects.get(id=user_id)
+            provedor_id = None
+            
+            # Se o usuário tem provedor direto
+            if hasattr(user, 'provedor') and user.provedor:
+                provedor_id = user.provedor.id
+            # Se o usuário é admin de provedores
+            elif hasattr(user, 'provedores_admin') and user.provedores_admin.exists():
+                provedor_id = user.provedores_admin.first().id
+            
+            if provedor_id and str(provedor_id) not in self.visualizacoes:
+                self.visualizacoes[str(provedor_id)] = {
+                    'user_id': user_id,
+                    'username': user.username,
+                    'timestamp': timezone.now().isoformat()
+                }
+                self.visualizacoes_count = len(self.visualizacoes)
+                self.save(update_fields=['visualizacoes', 'visualizacoes_count'])
+                print(f"Mensagem marcada como visualizada pelo provedor {provedor_id} (usuário {user.username})")
+            else:
+                print(f"Usuário {user.username} não tem provedor associado ou já visualizou")
+                
+        except User.DoesNotExist:
+            print(f"Usuário com ID {user_id} não encontrado")
+        except Exception as e:
+            print(f"Erro ao marcar visualização: {e}")
+
+
 # Sinal para criar token automaticamente ao criar usuário
 @receiver(post_save, sender=User)
 def create_auth_token(sender, instance=None, created=False, **kwargs):
@@ -402,12 +487,19 @@ def log_user_login(sender, request, user, **kwargs):
     from core.models import AuditLog, Provedor
     ip = request.META.get('REMOTE_ADDR')
     
+    print(f"DEBUG SIGNAL: Processando login para user: {user}")
+    print(f"DEBUG SIGNAL: User type: {type(user)}")
+    
     # Buscar provedor do usuário
     provedor = None
     if hasattr(user, 'provedor_id') and user.provedor_id:
         provedor = Provedor.objects.filter(id=user.provedor_id).first()
+        print(f"DEBUG SIGNAL: Provedor por provedor_id: {provedor}")
     if not provedor:
         provedor = Provedor.objects.filter(admins=user).first()
+        print(f"DEBUG SIGNAL: Provedor por admins: {provedor}")
+    
+    print(f"DEBUG SIGNAL: Provedor final: {provedor}")
     
     AuditLog.objects.create(
         user=user, 
@@ -416,6 +508,7 @@ def log_user_login(sender, request, user, **kwargs):
         details='Login no sistema',
         provedor=provedor
     )
+    print(f"DEBUG SIGNAL: Log criado com provedor: {provedor}")
 
 @receiver(user_logged_out)
 def log_user_logout(sender, request, user, **kwargs):

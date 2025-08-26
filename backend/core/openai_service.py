@@ -6,6 +6,7 @@ import os
 import openai
 import logging
 import json
+import re
 from typing import Dict, Any, Optional, List
 from django.conf import settings
 from .models import Provedor, SystemConfig
@@ -18,9 +19,9 @@ logger = logging.getLogger(__name__)
 
 class OpenAIService:
     def __init__(self):
-        self.api_key = self._get_api_key()
-        openai.api_key = self.api_key
-        self.model = "gpt-3.5-turbo"
+        # Não buscar chave durante inicialização para evitar problemas de contexto
+        self.api_key = None
+        self.model = "gpt-4.1"
         self.max_tokens = 1000
         self.temperature = 0.7
 
@@ -195,303 +196,82 @@ class OpenAIService:
             "Encaminhar para um atendente humano quando necessário"
         ]
         
-        # Ferramentas disponíveis - usar personalizadas se disponíveis, senão usar padrão
-        ferramentas_padrao = [
-            {
-                "name": "buscar_documentos",
-                "usage": "Use esta ferramenta sempre que o usuário fizer uma pergunta técnica ou comercial fora do seu conhecimento. Se não encontrar nada, encaminhe para um atendente humano."
-            },
-            {
-                "name": "validar_cpf",
-                "usage": "Após coletar o CPF do cliente, utilize essa ferramenta para validar o CPF e recuperar os dados do cliente."
-            },
-            {
-                "name": "buscar_faturas",
-                "usage": "Use esta ferramenta quando o cliente solicitar a segunda via da fatura, conta ou boleto. Sempre pergunte se ele deseja receber o QRCODE PIX ou o boleto. Se ele ja estiver falado, não pergunte novamente.",
-                "observacao": "Se o cliente tiver mais de 2 faturas pendentes, informe e encaminhe para o atendimento humano usando a tool 'encaminha_financeiro'."
-            },
-            {
-                "name": "envia_boleto",
-                "usage": "Use esta ferramenta para enviar o boleto para cliente apos ele ter decidido que deseja receber a sua fatura via boleto.",
-                "observacao": "Após usar a ferramenta, pergunte se o cliente deseja mais alguma coisa."
-            },
-            {
-                "name": "envia_qrcode",
-                "usage": "Use esta ferramenta para enviar o QRCODE PIX para cliente apos ele ter decidido que deseja receber a sua fatura via pix/qrcode",
-                "observacao": "Após usar a ferramenta, pergunte se o cliente deseja mais alguma coisa."
-            },
-            {
-                "name": "prazo_de_confianca",
-                "usage": "Use esta ferramenta para tentar desbloquear o contrato do cliente por prazo de confiança, caso o cliente peça pra desbloquear.",
-                "observacao": "Após usar a ferramenta, pergunte se o cliente deseja a sua fatura para pagamento antes que o contrato fique suspenso novamente."
-            },
-            {
-                "name": "checha_conexao",
-                "usage": "Use esta ferramenta para verificar o status da conexão do cliente. Ela retornará se o equipamento está online ou offline."
-            },
-            {
-                "name": "encaminha_suporte",
-                "usage": "Use esta ferramenta para encaminhar o cliente para o suporte humano quando necessário, como em casos de problemas técnicos que não puder resolver."
-            },
-            {
-                "name": "encaminha_financeiro",
-                "usage": "Use esta ferramenta para encaminhar o cliente para o departamento financeiro quando necessário, como em casos de dúvidas sobre faturas, pagamentos ou questões financeiras."
-            },
-            {
-                "name": "GetCpfContato",
-                "usage": "Use essa ferramenta para capturar o CPF do cliente no contato inicial. Ela retornará o CPF/CNPJ já salvo no contato do ChatWoot, se existir. *SEMPRE* use essa ferramenta antes de solicitar o CPF ao cliente.",
-                "observacao": "**EXECUÇÃO OBRIGATÓRIA**: Deve ser acionada automaticamente nos primeiros 3 segundos de interação, antes de qualquer pergunta. Se falhar, reinicie o atendimento.",
-                "critical_rule": True
-            },
-            {
-                "name": "SalvarCpfContato",
-                "usage": "Use essa ferramenta para salvar o numero do CPF do cliente dentro do seu contato no ChatWoot. O CPF DEVE SER SALVO SOMENTE NO FORMATO NUMÉRICO."
-            },
-            {
-                "name": "consultar_cliente_sgp",
-                "usage": "Use esta ferramenta para consultar dados reais do cliente no SGP usando CPF/CNPJ. Retorna nome, contratos, status reais do sistema.",
-                "observacao": "SEMPRE use esta ferramenta após receber CPF/CNPJ de cliente existente. Use APENAS os dados retornados.",
-                "critical_rule": True
-            },
-            {
-                "name": "verificar_acesso_sgp", 
-                "usage": "Use para verificar status de acesso/conexão de um contrato específico no SGP.",
-                "observacao": "Use após identificar o contrato do cliente via consultar_cliente_sgp."
-            },
-            {
-                "name": "gerar_fatura_completa",
-                "usage": "Use para gerar fatura completa com boleto, PIX, QR code e todos os dados de pagamento.",
-                "observacao": "SEMPRE use esta ferramenta quando cliente pedir fatura/boleto. Retorna dados completos incluindo PIX.",
-                "critical_rule": True
-            },
-            {
-                "name": "gerar_pix_qrcode",
-                "usage": "Use para gerar especificamente PIX e QR code para uma fatura.",
-                "observacao": "Use quando precisar apenas dos dados PIX de uma fatura específica."
-            }
-        ]
+        # Ferramentas simplificadas
+        ferramentas = []
         
-        # Usar ferramentas personalizadas se disponíveis, senão usar padrão
-        ferramentas = provedor.ferramentas_ia if provedor.ferramentas_ia else ferramentas_padrao
+        # Regras simplificadas
+        regras_gerais = []
         
-        # Regras gerais - usar personalizadas se disponíveis, senão usar padrão
-        regras_padrao = [
-            f"Responder apenas sobre assuntos relacionados à {nome_provedor}.",
-            "Nunca inventar informações. Sempre use 'buscar_documentos' para confirmar dados técnicos ou planos.",
-            "Se não souber ou for fora do escopo, diga exatamente: 'Desculpe, não posso te ajudar com isso. Encaminhando para um atendente humano.'",
-            "Seja natural e conversacional. Responda cumprimentos e perguntas gerais de forma amigável.",
-            "REGRA CRÍTICA: Se cliente já disse o que quer (fatura, boleto, suporte), NÃO pergunte 'como posso ajudar' - vá DIRETO executar a demanda. EXEMPLO: Se cliente diz 'manda fatura', vá direto pedir CPF/CNPJ, NÃO pergunte 'como posso ajudar hoje?'",
-            "REGRA CRÍTICA PARA FERRAMENTAS: SEMPRE use a ferramenta 'GetCpfContato' ANTES de perguntar CPF/CNPJ. Use a memória Redis para não pedir CPF repetidamente.",
-            "REGRA CRÍTICA PARA FATURA: Quando cliente solicitar fatura/boleto, SEMPRE: 1) Peça CPF/CNPJ → 2) Consulte SGP → 3) Gere fatura completa → 4) ENVIE automaticamente via WhatsApp com botões interativos.",
-            "Quando cliente mencionar FATURA/BOLETO: peça CPF → consulte SGP → apresente dados → AUTOMATICAMENTE gere fatura completa com QR code e PIX → ENVIE automaticamente via WhatsApp. NUNCA pergunte 'como posso ajudar' se cliente já pediu fatura.",
-            "Quando cliente mencionar PROBLEMA TÉCNICO: peça CPF → consulte SGP → apresente dados → AUTOMATICAMENTE verifique status da conexão.",
-            "NUNCA use textos genéricos se a demanda já foi especificada - seja específico e direto.",
-            "REGRA ESPECÍFICA PARA FATURA: Se cliente diz 'manda fatura', 'quero pagar internet', 'preciso da fatura', etc., vá DIRETO pedir CPF/CNPJ com a mensagem: 'Para que eu possa localizar seu contrato e enviar sua fatura por favor me informe o cpf/cnpj do titular do contrato'",
-            "Após receber CPF/CNPJ: consulte automaticamente no SGP e execute a ação solicitada.",
-            "NUNCA invente nomes de clientes, contratos ou dados - use APENAS informações reais do SGP.",
-            "Para novos clientes: responda sobre planos sem necessidade de CPF.",
-            "REGRA DE MEMÓRIA: Use sempre a memória Redis para lembrar CPF/CNPJ já fornecidos e não pedir repetidamente.",
-            "REGRA DE ENVIO AUTOMÁTICO: Para faturas, SEMPRE envie automaticamente via WhatsApp após gerar os dados. Use a função _send_fatura_via_uazapi."
-        ]
+        # Fluxo simplificado
+        fluxo = {}
         
-        regras_gerais = provedor.regras_gerais if provedor.regras_gerais else regras_padrao
-        
-        # Fluxo de atendimento - usar personalizado se disponível, senão usar padrão
-        fluxo_padrao = {
-            "boas_vindas": {
-                "instructions": f"Use '{greeting_time}' para saudar baseado no horário atual. Seja natural e acolhedor. SEMPRE pergunte se é cliente quando ele solicitar algo específico como boleto, suporte técnico, etc. Use a ferramenta 'GetCpfContato' ANTES de perguntar CPF.",
-                "example_message": f"{greeting_time}! Seja bem-vindo à {nome_provedor}! Eu sou o {nome_agente}, como posso te ajudar?"
-            },
-            "cliente": {
-                "descricao_geral": f"Fluxo para quem já é cliente da {nome_provedor}.",
-                "instrucoes_importantes": [
-                    "SEMPRE use a ferramenta 'GetCpfContato' ANTES de perguntar CPF/CNPJ",
-                    "Se o cliente disser que já é cliente, vá DIRETO para solicitar CPF/CNPJ",
-                    "Após receber CPF/CNPJ, consulte AUTOMATICAMENTE no SGP e retorne os dados reais",
-                    "Use apenas dados reais vindos do SGP, nunca invente informações",
-                    "Use a memória Redis para não pedir CPF repetidamente"
-                ],
-                "etapas": [
-                    {
-                        "etapa": 1,
-                        "titulo": "Verificar se é cliente",
-                        "acao_ia": "SEMPRE pergunte se é cliente quando ele solicitar algo específico. Use: 'Para te ajudar melhor, você já é nosso cliente?'",
-                        "observacao": "Esta pergunta é OBRIGATÓRIA para qualquer solicitação específica (fatura, boleto, suporte, etc.)"
-                    },
-                    {
-                        "etapa": 2,
-                        "titulo": "Detectar demanda específica",
-                        "acao_ia": "SE o cliente já mencionou uma demanda específica (fatura, boleto, problema técnico, etc.), vá DIRETO para ela. NÃO pergunte 'como posso ajudar' se ele já disse.",
-                        "demandas_especificas": [
-                            "fatura", "boleto", "conta", "pagamento", "segunda via",
-                            "sem internet", "internet parou", "problema", "suporte",
-                            "cancelar", "mudar plano", "reclamação"
-                        ],
-                        "observacao": "Se cliente disse 'quero pagar minha fatura' ou 'manda fatura', vá direto para solicitar CPF e gerar fatura. NUNCA pergunte 'como posso ajudar'."
-                    },
-                    {
-                        "etapa": 3,
-                        "titulo": "Solicitar CPF/CNPJ para demanda específica",
-                        "acao_ia": "Para demandas específicas, peça CPF/CNPJ de forma direcionada ao que ele quer. NUNCA pergunte 'como posso ajudar' se cliente já especificou o que quer.",
-                        "examples": {
-                            "fatura": "Para que eu possa localizar seu contrato e enviar sua fatura por favor me informe o cpf/cnpj do titular do contrato",
-                            "suporte": "Para verificar sua conexão, preciso do seu CPF ou CNPJ.",
-                            "geral": "Para localizar seu cadastro, preciso do seu CPF ou CNPJ."
-                        }
-                    },
-                    {
-                        "etapa": 4,
-                        "titulo": "Consultar SGP e executar demanda automaticamente",
-                        "acao_ia": "Após consultar dados no SGP, execute automaticamente a demanda solicitada:",
-                        "acoes_por_demanda": {
-                            "fatura": "Consulte SGP → Apresente dados do cliente → AUTOMATICAMENTE gere fatura com QR code, PIX e valor → ENVIE automaticamente via WhatsApp",
-                            "suporte": "Consulte SGP → Apresente dados do cliente → AUTOMATICAMENTE verifique status da conexão",
-                            "geral": "Consulte SGP → Apresente dados do cliente → Pergunte como pode ajudar"
-                        },
-                        "observacao": "NÃO pergunte 'como posso ajudar' se o cliente já especificou o que quer. Para faturas, SEMPRE envie automaticamente via WhatsApp após gerar."
-                    },
-                    {
-                        "etapa": 5,
-                        "titulo": "Entregar resultado completo",
-                        "acao_ia": "Entregue o resultado completo da demanda em uma mensagem organizada.",
-                        "example_fatura": "🧾 **Sua Fatura**\n📄 Valor: R$ 89,90\n📅 Vencimento: 15/08/2024\n💳 Código PIX: pix123abc\n📱 QR Code: [link]\n📋 ID Fatura: #12345\n\n✅ **Fatura enviada automaticamente via WhatsApp com botões interativos!**"
-                    }
-                ]
-            },
-            "nao_cliente": {
-                "descricao_geral": f"Fluxo para pessoas que ainda não são clientes da {nome_provedor}.",
-                "etapas": [
-                    {
-                        "etapa": 1,
-                        "titulo": "Descobrir interesse",
-                        "acao_ia": f"Perguntar se conhece a {nome_provedor} e qual sua necessidade com internet. Se já tiver falado, não pergunte novamente.",
-                        "example_message": f"👀Você já conhece a {nome_provedor}? Está buscando internet pra *casa*, *trabalho* ou algo mais específico? "
-                    },
-                    {
-                        "etapa": 2,
-                        "titulo": "Apresentar benefícios",
-                        "acao_ia": f"Falar dos diferenciais da {nome_provedor} (fibra óptica, estabilidade, suporte, etc.).",
-                        "example_message": f"A {nome_provedor} oferece internet via fibra óptica, super estável e com suporte 24/7! Temos planos incríveis para atender sua necessidade. Vamos ver qual é o melhor pra você? 😊"
-                    },
-                    {
-                        "etapa": 3,
-                        "titulo": "Apresentar planos",
-                        "acao_ia": "Utilize 'buscar_documentos' para mostrar os planos atuais e tirar dúvidas."
-                    },
-                    {
-                        "etapa": 4,
-                        "titulo": "Coletar dados para proposta",
-                        "acao_ia": "Pedir nome completo e endereço para continuar com a contratação.",
-                        "example_message": "Que ótimo! Para seguir com a contratação, preciso do seu nome completo e endereço, por favor. Assim já agilizo tudo para você! "
-                    },
-                    {
-                        "etapa": 5,
-                        "titulo": "Encaminhar para atendimento humano",
-                        "acao_ia": "Encaminhar para equipe de vendas ou atendimento final com dados coletados."
-                    }
-                ]
-            },
-            "fallback": {
-                "instructions": "Se não entender a intenção ou for assunto fora da Fibra/telecom, usar resposta padrão e encaminhar.",
-                "example_message": "Desculpe, não posso te ajudar com isso. Encaminhando para um atendente humano."
-            }
-        }
-        
-        fluxo = provedor.fluxo_atendimento if provedor.fluxo_atendimento else fluxo_padrao
-        
-        # Montar prompt JSON completo
+        # Prompt simplificado
         prompt_dict = {
             "name": nome_agente,
-            "context": {
-                "identity": identidade,
                 "business": nome_provedor,
-                "site": site_oficial,
-                "endereco": endereco,
-                "language": "Português Brasileiro",
-                "data_atual": data_atual,
-                "planos_internet": planos_internet,
-                "informacoes_extras": informacoes_extras,
-                "taxa_adesao": taxa_adesao,
-                "inclusos_plano": inclusos_plano,
-                "multa_cancelamento": multa_cancelamento,
-                "tipo_conexao": tipo_conexao,
-                "prazo_instalacao": prazo_instalacao,
-                "documentos_necessarios": documentos_necessarios,
-                "observacoes": observacoes,
-                "email_contato": email_contato,
-                "greeting_time": greeting_time
-            },
-            "greeting_config": {
-                "greeting_time": greeting_time,
-                "instructions": f"Use '{greeting_time}' para saudar baseado no horário atual. Seja natural e acolhedor."
-            },
-            "redes_sociais": {
-                "instagram": redes.get('instagram', ''),
-                "facebook": redes.get('facebook', ''),
-                "tiktok": redes.get('tiktok', ''),
-                "google_meu_negocio": redes.get('google', '')
-            },
-            "horarios_funcionamento": horarios,
-            "personality": personalidade,
-            "objectives": objetivos,
-            "tools": ferramentas,
-            "general_rules": regras_gerais,
-            "flow": fluxo
+            "language": "Português Brasileiro"
         }
         
-        # Adicionar personalidade avançada se configurada
-        if personalidade_avancada:
-            vicios = personalidade_avancada.get('vicios_linguagem', '')
-            caracteristicas = personalidade_avancada.get('caracteristicas', '')
-            principios = personalidade_avancada.get('principios', '')
-            humor = personalidade_avancada.get('humor', '')
-            
-            instructions = []
-            if vicios:
-                instructions.append(f"Vícios de linguagem: {vicios}")
-            if caracteristicas:
-                instructions.append(f"Características: {caracteristicas}")
-            if principios:
-                instructions.append(f"Princípios: {principios}")
-            if humor:
-                instructions.append(f"Humor: {humor}")
-            
-            prompt_dict["personalidade_avancada"] = {
-                "vicios_linguagem": vicios,
-                "caracteristicas": caracteristicas,
-                "principios": principios,
-                "humor": humor,
-                "instructions": "IMPORTANTE: Incorpore estes aspectos de personalidade naturalmente em todas as suas respostas:\n" + "\n".join(f"• {inst}" for inst in instructions) + "\n\nNão mencione que está seguindo essas instruções, apenas seja essa personalidade de forma natural e autêntica."
-            }
-        
-        # Configuração de emojis baseada na preferência do provedor
-        if uso_emojis:
-            if uso_emojis.lower() == "sempre":
-                prompt_dict["emoji_config"] = {
-                    "usage": "sempre",
-                    "instructions": "Use emojis naturalmente em suas respostas para torná-las mais amigáveis e expressivas. Varie os emojis conforme o contexto."
-                }
-            elif uso_emojis.lower() == "ocasionalmente":
-                prompt_dict["emoji_config"] = {
-                    "usage": "ocasionalmente", 
-                    "instructions": "Use emojis moderadamente, apenas em momentos apropriados como saudações, agradecimentos ou para destacar informações importantes."
-                }
-            elif uso_emojis.lower() == "nunca":
-                prompt_dict["emoji_config"] = {
-                    "usage": "nunca",
-                    "instructions": "NÃO use emojis nas respostas. Mantenha uma comunicação mais formal e textual."
-                }
-        else:
-            # Padrão: uso ocasional
-            prompt_dict["emoji_config"] = {
-                "usage": "ocasionalmente",
-                "instructions": "Use emojis moderadamente, apenas em momentos apropriados como saudações, agradecimentos ou para destacar informações importantes."
-            }
-            
-        print("PROMPT GERADO PARA IA:\n", json.dumps(prompt_dict, ensure_ascii=False, indent=2))
-        return json.dumps(prompt_dict, ensure_ascii=False, indent=2)
+        return f"Você é {nome_agente} da {nome_provedor}. Seja natural e ajude o cliente."
 
-    def _execute_sgp_function(self, provedor: Provedor, function_name: str, function_args: dict) -> dict:
+    def _corrigir_formato_resposta(self, resposta: str) -> str:
+        """
+        Força o formato correto da resposta, removendo formatos antigos indesejados
+        """
+        import re
+        
+        # Se a resposta contém o formato antigo, corrigir
+        if any(termo in resposta for termo in ['*Dados do Cliente:*', '*Nome:*', '*Status do Contrato:*', 'ℹ', '👤', '🔒']):
+            logger.warning("Detectado formato antigo na resposta, corrigindo...")
+            
+            # Formatação básica removida
+            
+            # Extrair nome do cliente se presente
+            nome_match = re.search(r'([A-Z\s]+(?:DA|DE|DO|DOS|DAS|E)\s+[A-Z\s]+)', resposta)
+            if nome_match:
+                nome_cliente = nome_match.group(1).strip()
+                
+                # Verificar se há informações de contrato (status ou números de contrato)
+                if 'Suspenso' in resposta or 'Ativo' in resposta or any(char.isdigit() for char in resposta):
+                    # Formato corrigido para um contrato
+                    resposta_corrigida = f"Contrato:\n*{nome_cliente}*\n\n1 - Contrato (ID): *Dados do contrato*\n\nOs dados estão corretos?"
+                    logger.info(f"Formato corrigido aplicado: {resposta_corrigida[:50]}...")
+                    return resposta_corrigida
+            
+            # Limpar múltiplas quebras de linha
+            resposta = re.sub(r'\n\s*\n', '\n\n', resposta)
+            resposta = resposta.strip()
+            
+            logger.info(f"Formato antigo removido, resposta limpa: {resposta[:50]}...")
+        
+        # IMPLEMENTAR DELAY DE 5 SEGUNDOS APÓS MOSTRAR DADOS DO CLIENTE
+        if 'Contrato:' in resposta and '1 - Contrato' in resposta:
+            logger.info("Detectados dados do cliente - aplicando delay de 5 segundos")
+            import time
+            time.sleep(5)  # Delay de 5 segundos
+            logger.info("Delay de 5 segundos aplicado")
+        
+        return resposta
+
+    def _is_valid_cpf_cnpj(self, cpf_cnpj: str) -> bool:
+        """Valida se a string é um CPF ou CNPJ válido"""
+        if not cpf_cnpj:
+            return False
+        
+        # Remove caracteres especiais
+        clean = re.sub(r'[^\d]', '', str(cpf_cnpj))
+        
+        # CPF tem 11 dígitos, CNPJ tem 14
+        if len(clean) not in [11, 14]:
+            return False
+            
+        # Verifica se são todos dígitos
+        if not clean.isdigit():
+            return False
+            
+        return True
+
+    def _execute_sgp_function(self, provedor: Provedor, function_name: str, function_args: dict, contexto: dict = None) -> dict:
         """Executa funções do SGP chamadas pela IA"""
         try:
             from .sgp_client import SGPClient
@@ -515,6 +295,9 @@ class OpenAIService:
                 app_name=sgp_app
             )
             
+            # Log para debug das credenciais SGP
+            logger.info(f"SGP Client criado com URL: {sgp_url}, Token: {'Configurado' if sgp_token else 'Não configurado'}, App: {sgp_app}")
+            
             # Executar função solicitada
             if function_name == "consultar_cliente_sgp":
                 cpf_cnpj = function_args.get('cpf_cnpj', '').replace('.', '').replace('-', '').replace('/', '')
@@ -527,15 +310,18 @@ class OpenAIService:
                     # Se tem apenas um contrato, retorna dados essenciais
                     if len(contratos) == 1:
                         contrato = contratos[0]
+                        endereco = f"{contrato.get('endereco_logradouro', '')} {contrato.get('endereco_numero', '')}, {contrato.get('endereco_bairro', '')}, {contrato.get('endereco_cidade', '')}"
                         return {
                             "success": True,
                             "cliente_encontrado": True,
                             "nome": contrato.get('razaoSocial', 'Nome não encontrado'),
                             "contrato_id": contrato.get('contratoId'),
+                            "endereco": endereco.strip(),
                             "status_contrato": contrato.get('contratoStatusDisplay'),
                             "dados_essenciais": {
                                 "contratoId": contrato.get('contratoId'),
                                 "razaoSocial": contrato.get('razaoSocial'),
+                                "endereco": endereco.strip(),
                                 "contratoStatusDisplay": contrato.get('contratoStatusDisplay')
                             }
                         }
@@ -585,84 +371,100 @@ class OpenAIService:
                     "dados_completos": resultado
                 }
                 
-            elif function_name == "gerar_fatura_completa":
-                # Implementação para gerar fatura completa
-                contrato = function_args.get('contrato', '')
-                if contrato:
-                    try:
-                        # Gerar fatura via SGP
-                        resultado = sgp.gerar_fatura_completa(contrato)
+            elif function_name == "encerrar_atendimento":
+                # Implementação para encerrar atendimento e limpar memória
+                try:
+                    motivo = function_args.get('motivo', 'nao_especificado')
+                    
+                    # Limpar memória Redis da conversa se disponível
+                    conversation_id = None
+                    if contexto and contexto.get('conversation'):
+                        conversation_id = contexto['conversation'].id
                         
-                        if resultado and resultado.get('success'):
-                            # Extrair dados da fatura
-                            fatura_data = resultado.get('dados_fatura', {})
-                            fatura_id = fatura_data.get('fatura_id')
-                            valor = fatura_data.get('valor')
-                            vencimento = fatura_data.get('vencimento')
-                            status = fatura_data.get('status', 'em aberto')
+                        try:
+                            # Limpar memória Redis
+                            from .redis_memory_service import redis_memory_service
+                            redis_client = redis_memory_service.get_redis_sync()
+                            if redis_client and conversation_id:
+                                chave_conversa = f'conversation:{provedor.id}:{conversation_id}'
+                                redis_client.delete(chave_conversa)
+                                logger.info(f"Memória Redis limpa para conversa {conversation_id}")
+                        except Exception as e:
+                            logger.warning(f"Erro ao limpar memória Redis: {e}")
+                    
+                    return {
+                        "success": True,
+                        "atendimento_encerrado": True,
+                        "motivo": motivo,
+                        "mensagem": "Obrigado pelo contato! Tenha um ótimo dia! 👋",
+                        "conversation_id": conversation_id
+                    }
+                    
+                except Exception as e:
+                    logger.error(f"Erro ao encerrar atendimento: {e}")
+                    return {
+                        "success": False,
+                        "erro": f"Erro ao encerrar atendimento: {str(e)}"
+                    }
+                
+            elif function_name == "gerar_fatura_completa":
+                # Implementação usando fatura_service.py e qr_code_service.py
+                cpf_cnpj = function_args.get('cpf_cnpj', '')
+                contrato = function_args.get('contrato', '')
+                numero_whatsapp = function_args.get('numero_whatsapp', '')
+                tipo_pagamento = function_args.get('tipo_pagamento', 'pix')
+                
+                # Extrair número WhatsApp apenas do contexto atual da conversa
+                if not numero_whatsapp and contexto and contexto.get('conversation'):
+                    conversation = contexto['conversation']
+                    if hasattr(conversation, 'contact') and hasattr(conversation.contact, 'phone'):
+                        numero_whatsapp = conversation.contact.phone
+                        logger.info(f"Número WhatsApp obtido da conversa atual: {numero_whatsapp}")
                             
-                            # Gerar PIX se disponível
-                            pix_data = None
-                            if fatura_id:
-                                try:
-                                    pix_data = sgp.gerar_pix(fatura_id)
-                                except Exception as e:
-                                    logger.warning(f"Erro ao gerar PIX: {e}")
-                            
-                            # Preparar dados para envio automático
-                            dados_fatura = {
-                                'fatura_id': fatura_id,
-                                'valor': valor,
-                                'vencimento': vencimento,
-                                'status_fatura': status,
-                                'codigo_pix': pix_data.get('codigo_pix') if pix_data else None,
-                                'linha_digitavel': fatura_data.get('linha_digitavel'),
-                                'link_fatura': fatura_data.get('link_fatura')
-                            }
-                            
-                            # ENVIAR AUTOMATICAMENTE VIA WHATSAPP
-                            numero_whatsapp = function_args.get('numero_whatsapp', '')
-                            
-                            # Se não foi fornecido, tentar obter do contexto da conversa
-                            if not numero_whatsapp and 'conversation' in function_args:
-                                conversation = function_args['conversation']
-                                if hasattr(conversation, 'contact') and conversation.contact:
-                                    numero_whatsapp = conversation.contact.phone_number
-                            
-                            if numero_whatsapp:
-                                try:
-                                    fatura_enviada = self._send_fatura_via_uazapi(
-                                        provedor=provedor,
-                                        numero_whatsapp=numero_whatsapp,
-                                        dados_fatura=dados_fatura
-                                    )
-                                    
-                                    if fatura_enviada:
-                                        logger.info(f"Fatura enviada automaticamente via WhatsApp para {numero_whatsapp}")
-                                        dados_fatura['enviada_whatsapp'] = True
-                                    else:
-                                        logger.warning(f"Falha ao enviar fatura via WhatsApp para {numero_whatsapp}")
-                                        dados_fatura['enviada_whatsapp'] = False
-                                except Exception as e:
-                                    logger.error(f"Erro ao enviar fatura via WhatsApp: {e}")
-                                    dados_fatura['enviada_whatsapp'] = False
-                            else:
-                                logger.warning("Número de WhatsApp não fornecido para envio automático")
-                                dados_fatura['enviada_whatsapp'] = False
+                if cpf_cnpj:
+                    # Validar se o CPF/CNPJ é válido
+                    if not self._is_valid_cpf_cnpj(cpf_cnpj):
+                        return {
+                            "success": False,
+                            "erro": f"CPF/CNPJ inválido: '{cpf_cnpj}'. Por favor, informe um CPF (11 dígitos) ou CNPJ (14 dígitos) válido."
+                        }
+                    
+                    try:
+                        from .fatura_service import FaturaService
+                        fatura_service = FaturaService()
+                        
+                        logger.info(f"Executando gerar_fatura_completa usando FaturaService para CPF/CNPJ: {cpf_cnpj}")
+                        
+                        # O SGP aceita CPF/CNPJ diretamente - não precisa buscar contrato_id primeiro
+                        # Processar fatura completa usando FaturaService com CPF/CNPJ
+                        resultado = fatura_service.processar_fatura_completa(
+                            provedor=provedor,
+                            cpf_cnpj=cpf_cnpj,  # Usar CPF/CNPJ diretamente
+                            numero_whatsapp=numero_whatsapp,
+                            preferencia_pagamento=tipo_pagamento,  # PIX ou boleto conforme solicitado
+                            conversation=contexto.get('conversation')
+                        )
+                        
+                        if resultado.get('success'):
+                            # Criar mensagem dinâmica baseada no tipo de pagamento
+                            if tipo_pagamento == 'pix':
+                                mensagem_sucesso = "✅ Acabei de enviar sua fatura via WhatsApp com QR Code e botão de cópia PIX!\n\nPosso te ajudar com mais alguma coisa?"
+                            else:  # boleto
+                                mensagem_sucesso = "✅ Acabei de enviar sua fatura via WhatsApp com boleto PDF!\n\nPosso te ajudar com mais alguma coisa?"
                             
                             return {
                                 "success": True,
                                 "fatura_gerada": True,
-                                "dados_fatura": dados_fatura,
-                                "enviada_whatsapp": dados_fatura.get('enviada_whatsapp', False),
-                                "mensagem": "Fatura gerada com sucesso e enviada automaticamente via WhatsApp" if dados_fatura.get('enviada_whatsapp') else "Fatura gerada com sucesso, mas falha no envio via WhatsApp"
+                                "tipo_pagamento": tipo_pagamento,
+                                "enviada_whatsapp": True,
+                                "mensagem_formatada": mensagem_sucesso
                             }
                         else:
                             return {
                                 "success": False,
-                                "erro": "Não foi possível gerar a fatura",
-                                "dados_fatura": resultado
+                                "erro": resultado.get('error', 'Erro ao processar fatura')
                             }
+                            
                     except Exception as e:
                         logger.error(f"Erro ao gerar fatura completa: {e}")
                         return {
@@ -672,12 +474,170 @@ class OpenAIService:
                 else:
                     return {
                         "success": False,
-                        "erro": "Contrato não fornecido"
+                        "erro": "CPF/CNPJ não fornecido"
                     }
                 
-            elif function_name == "gerar_pix_qrcode":
-                fatura_id = function_args.get('fatura_id')
-                resultado = sgp.gerar_pix(fatura_id)
+            elif function_name == "enviar_qr_code_pix":
+                # Implementação para enviar apenas QR Code PIX
+                cpf_cnpj = function_args.get('cpf_cnpj', '')
+                contrato = function_args.get('contrato', '')
+                numero_whatsapp = function_args.get('numero_whatsapp', '')
+                
+                if cpf_cnpj:
+                    # Validar se o CPF/CNPJ é válido
+                    if not self._is_valid_cpf_cnpj(cpf_cnpj):
+                        return {
+                            "success": False,
+                            "erro": f"CPF/CNPJ inválido: '{cpf_cnpj}'. Por favor, informe um CPF (11 dígitos) ou CNPJ (14 dígitos) válido."
+                        }
+                    try:
+                        from .fatura_service import FaturaService
+                        fatura_service = FaturaService()
+                        
+                        # Buscar contrato se não fornecido
+                        if not contrato:
+                            try:
+                                from .sgp_client import SGPClient
+                                integracao = provedor.integracoes_externas or {}
+                                sgp_url = integracao.get('sgp_url')
+                                sgp_token = integracao.get('sgp_token') 
+                                sgp_app = integracao.get('sgp_app')
+                                
+                                if all([sgp_url, sgp_token, sgp_app]):
+                                    sgp = SGPClient(base_url=sgp_url, token=sgp_token, app_name=sgp_app)
+                                    cliente_resultado = sgp.consultar_cliente(cpf_cnpj)
+                                    
+                                    if cliente_resultado.get('contratos') and len(cliente_resultado['contratos']) > 0:
+                                        contrato = cliente_resultado['contratos'][0].get('contratoId')
+                                    else:
+                                        return {
+                                            "success": False,
+                                            "erro": "Cliente não encontrado ou sem contrato ativo"
+                                        }
+                                else:
+                                    return {
+                                        "success": False,
+                                        "erro": "Configurações do SGP não encontradas"
+                                    }
+                            except Exception as e:
+                                logger.error(f"Erro ao buscar cliente para contrato: {e}")
+                                return {
+                                    "success": False,
+                                    "erro": f"Erro ao buscar dados do cliente: {str(e)}"
+                                }
+                        
+                        # Buscar dados da fatura
+                        dados_fatura = fatura_service.buscar_fatura_sgp(provedor, contrato)
+                        
+                        if dados_fatura and numero_whatsapp:
+                            # Enviar apenas QR Code PIX
+                            resultado = fatura_service.enviar_qr_code_pix(provedor, numero_whatsapp, dados_fatura, contexto.get('conversation'))
+                            
+                            if resultado:
+                                return {
+                                    "success": True,
+                                    "qr_code_enviado": True,
+                                    "mensagem": "QR Code PIX enviado com sucesso!"
+                                }
+                            else:
+                                return {
+                                    "success": False,
+                                    "erro": "Falha ao enviar QR Code PIX"
+                                }
+                        else:
+                            return {
+                                "success": False,
+                                "erro": "Fatura não encontrada ou número WhatsApp não fornecido"
+                            }
+                    except Exception as e:
+                        return {
+                            "success": False,
+                            "erro": f"Erro ao enviar QR Code PIX: {str(e)}"
+                        }
+                else:
+                    return {
+                        "success": False,
+                        "erro": "CPF/CNPJ não fornecido"
+                    }
+                    
+            elif function_name == "enviar_boleto_pdf":
+                # Implementação para enviar boleto em PDF
+                cpf_cnpj = function_args.get('cpf_cnpj', '')
+                contrato = function_args.get('contrato', '')
+                numero_whatsapp = function_args.get('numero_whatsapp', '')
+                
+                if cpf_cnpj:
+                    # Validar se o CPF/CNPJ é válido
+                    if not self._is_valid_cpf_cnpj(cpf_cnpj):
+                        return {
+                            "success": False,
+                            "erro": f"CPF/CNPJ inválido: '{cpf_cnpj}'. Por favor, informe um CPF (11 dígitos) ou CNPJ (14 dígitos) válido."
+                        }
+                    try:
+                        from .fatura_service import FaturaService
+                        fatura_service = FaturaService()
+                        
+                        # Buscar contrato se não fornecido
+                        if not contrato:
+                            try:
+                                from .sgp_client import SGPClient
+                                integracao = provedor.integracoes_externas or {}
+                                sgp_url = integracao.get('sgp_url')
+                                sgp_token = integracao.get('sgp_token') 
+                                sgp_app = integracao.get('sgp_app')
+                                
+                                if all([sgp_url, sgp_token, sgp_app]):
+                                    sgp = SGPClient(base_url=sgp_url, token=sgp_token, app_name=sgp_app)
+                                    cliente_resultado = sgp.consultar_cliente(cpf_cnpj)
+                                    
+                                    if cliente_resultado.get('contratos') and len(cliente_resultado['contratos']) > 0:
+                                        contrato = cliente_resultado['contratos'][0].get('contratoId')
+                                    else:
+                                        return {
+                                            "success": False,
+                                            "erro": "Cliente não encontrado ou sem contrato ativo"
+                                        }
+                                else:
+                                    return {
+                                        "success": False,
+                                        "erro": "Configurações do SGP não encontradas"
+                                    }
+                            except Exception as e:
+                                logger.error(f"Erro ao buscar cliente para contrato: {e}")
+                                return {
+                                    "success": False,
+                                    "erro": f"Erro ao buscar dados do cliente: {str(e)}"
+                                }
+                        
+                        # Processar fatura como boleto
+                        resultado = fatura_service.processar_fatura_completa(
+                            provedor=provedor,
+                            contrato_id=contrato,
+                            numero_whatsapp=numero_whatsapp,
+                            preferencia_pagamento='boleto'
+                        )
+                        
+                        if resultado.get('success'):
+                            return {
+                                "success": True,
+                                "boleto_enviado": True,
+                                "mensagem": "Boleto enviado com sucesso em PDF!"
+                            }
+                        else:
+                            return {
+                                "success": False,
+                                "erro": resultado.get('error', 'Erro ao enviar boleto')
+                            }
+                    except Exception as e:
+                        return {
+                            "success": False,
+                            "erro": f"Erro ao enviar boleto: {str(e)}"
+                        }
+                else:
+                    return {
+                        "success": False,
+                        "erro": "CPF/CNPJ não fornecido"
+                    }
                 
                 return {
                     "success": True,
@@ -701,14 +661,14 @@ class OpenAIService:
                     if not phone_number and 'conversation' in function_args:
                         conversation = function_args['conversation']
                         if hasattr(conversation, 'contact') and conversation.contact:
-                            phone_number = conversation.contact.phone_number
+                            phone_number = conversation.contact.phone
                     
                     if phone_number:
                         # Limpar número (remover formatação)
                         phone_clean = ''.join(filter(str.isdigit, str(phone_number)))
                         
                         # Buscar contato pelo número de telefone
-                        contact = Contact.objects.filter(phone_number=phone_clean).first()
+                        contact = Contact.objects.filter(phone=phone_clean).first()
                         if contact and contact.additional_attributes:
                             cpf = contact.additional_attributes.get('cpf_cnpj')
                             if cpf:
@@ -747,7 +707,7 @@ class OpenAIService:
                     if not phone_number and 'conversation' in function_args:
                         conversation = function_args['conversation']
                         if hasattr(conversation, 'contact') and conversation.contact:
-                            phone_number = conversation.contact.phone_number
+                            phone_number = conversation.contact.phone
                     
                     if phone_number and cpf_cnpj:
                         # Limpar CPF/CNPJ (apenas números)
@@ -756,7 +716,7 @@ class OpenAIService:
                         # Limpar número de telefone (apenas números)
                         phone_clean = ''.join(filter(str.isdigit, str(phone_number)))
                         
-                        contact = Contact.objects.filter(phone_number=phone_clean).first()
+                        contact = Contact.objects.filter(phone=phone_clean).first()
                         if contact:
                             if not contact.additional_attributes:
                                 contact.additional_attributes = {}
@@ -1007,33 +967,12 @@ class OpenAIService:
             # Construir prompt do sistema
             system_prompt = self._build_system_prompt(provedor)
             
-            # Instruções específicas para consulta de clientes
-            system_prompt += f"""
+            # Instruções específicas quando cliente pedir fatura
+            mensagem_lower = mensagem.lower()
+            if any(word in mensagem_lower for word in ['fatura', 'pix', 'boleto', 'pagar']):
+                system_prompt += """
 
-IMPORTANTE - CONSULTA DE CLIENTES:
-- Ao consultar um cliente pelo CPF/CNPJ, SEMPRE formate a resposta EXATAMENTE assim:
-
-**DADOS DO CLIENTE:**
-*NOME_DO_CLIENTE*
-
-Se tiver múltiplos contratos, liste assim:
-1 - Contrato (ID): *ENDEREÇO*
-2 - Contrato (ID): *ENDEREÇO*
-
-**DADOS DA FATURA (quando solicitado):**
-💳 *Sua fatura está em aberto:* (quando status = em aberto)
-💳 *Sua fatura está em atraso:* (quando status = em atraso)
-
-Fatura ID: [ID_DA_FATURA]
-Vencimento: [DATA_VENCIMENTO]
-Valor: R$ [VALOR]
-
-- IMPORTANTE: Após mostrar os dados da fatura, SEMPRE envie automaticamente via WhatsApp com botões interativos
-- Use a função _send_fatura_via_uazapi para enviar a mensagem com botões para PIX, linha digitável e acesso online
-- NÃO mostre dados desnecessários como MAC, senhas, configurações técnicas, etc.
-- Foque apenas nas informações essenciais para o atendimento.
-- SEMPRE use o formato exato acima para manter consistência.
-- Seja sempre cordial, objetivo e proativo.
+FLUXO: CPF → consultar → escolher → gerar
 """
             
             user_prompt = self._build_user_prompt(mensagem, contexto or {})
@@ -1071,89 +1010,492 @@ Valor: R$ [VALOR]
         provedor: Provedor,
         contexto: Dict[str, Any] = None
     ) -> Dict[str, Any]:
+        """Versão simplificada do gerador de resposta com memória Redis"""
         try:
-            # Atualizar a chave da API antes de usar
-            self.update_api_key()
+            from .redis_memory_service import redis_memory_service
+            # Buscar chave da API apenas quando necessário
+            if not self.api_key:
+                self.api_key = self._get_api_key()
+                if self.api_key:
+                    openai.api_key = self.api_key
+            
+            # SALVAR MENSAGEM DO CLIENTE NO REDIS (TEMPORARIAMENTE DESABILITADO PARA EVITAR RECURSÃO)
+            # if contexto and contexto.get('conversation'):
+            #     conversation = contexto['conversation']
+            #     try:
+            #         redis_memory_service.add_message_to_conversation_sync(
+            #             provedor_id=provedor.id,
+            #             conversation_id=conversation.id,
+            #             sender='customer',
+            #             content=mensagem,
+            #             message_type='text'
+            #         )
+            #         logger.info(f"✅ Mensagem do cliente salva no Redis: {mensagem[:50]}...")
+            #     except Exception as e:
+            #         logger.warning(f"Erro ao salvar mensagem do cliente no Redis: {e}")
             
             # Verificar se a chave foi configurada
             if not self.api_key:
-                logger.error("Chave da API OpenAI não configurada - configure no painel do superadmin")
+                logger.error("Chave da API OpenAI não configurada")
                 return {
                     "success": False,
-                    "erro": "Chave da API OpenAI não configurada. Configure no painel do superadmin.",
+                    "erro": "Chave da API OpenAI não configurada",
                     "provedor": provedor.nome
                 }
             
-            # Verificar se já perguntou se é cliente nesta conversa
-            conversation = contexto.get('conversation') if contexto else None
-            already_asked_if_client = False
+            # CARREGAR HISTÓRICO DA CONVERSA DO REDIS
+            historico_conversa = ""
+            if contexto and contexto.get('conversation'):
+                try:
+                    conversation = contexto['conversation']
+                    memoria_conversa = redis_memory_service.get_conversation_memory_sync(provedor.id, conversation.id)
+                    
+                    if memoria_conversa and 'messages' in memoria_conversa:
+                        mensagens = memoria_conversa['messages'][-20:]  # Últimas 20 mensagens
+                        
+                        historico_linhas = []
+                        for msg in mensagens:
+                            sender_label = {
+                                'customer': 'Cliente',
+                                'ai': 'IA',
+                                'agent': 'Atendente'
+                            }.get(msg['sender'], msg['sender'])
+                            
+                            historico_linhas.append(f"{sender_label}: {msg['content']}")
+                        
+                        if historico_linhas:
+                            historico_conversa = f"""
+
+HISTÓRICO DA CONVERSA ATUAL:
+{chr(10).join(historico_linhas)}
+
+IMPORTANTE: Use este histórico para manter contexto da conversa. NÃO repita perguntas já feitas ou informações já fornecidas."""
+                            logger.info(f"✅ Histórico carregado: {len(mensagens)} mensagens")
+                        
+                except Exception as e:
+                    logger.warning(f"Erro ao carregar histórico do Redis: {e}")
+
+            # NOVO PROMPT COMPLETO E PROFISSIONAL
+            system_prompt = f"""
+IMPORTANTE: Sempre retorne as mensagens em uma lista (um bloco para cada mensagem), para que o frontend exiba cada uma separadamente com efeito de 'digitando...'. Nunca junte mensagens diferentes em um único bloco.
+
+Você é {provedor.nome_agente_ia}, agente virtual do provedor {provedor.nome}. Seu papel é atender clientes e interessados, oferecendo suporte técnico, esclarecendo dúvidas e apresentando planos de internet. Seja acolhedor, objetivo e resolva o que for possível.{historico_conversa}
+
+CONTEXTO:
+- Empresa: {provedor.nome}
+- Agente: {provedor.nome_agente_ia}
+- Idioma: Português Brasileiro
+- Saudação atual: {self._get_greeting_time()}
+
+FERRAMENTAS DISPONÍVEIS:
+- consultar_cliente_sgp: Buscar dados do cliente no SGP usando CPF/CNPJ
+- gerar_fatura_completa: Gerar fatura completa usando fatura_service.py e qr_code_service.py
+- verificar_acesso_sgp: Verificar status da conexão do cliente
+- enviar_qr_code_pix: Enviar apenas QR Code PIX usando qr_code_service.py
+- enviar_boleto_pdf: Enviar boleto em PDF usando fatura_service.py
+
+IMPORTANTE - DADOS DO CLIENTE:
+Quando consultar_cliente_sgp retornar dados, SEMPRE mostre no formato EXATO:
+
+"Contrato:
+[NOME COMPLETO DO CLIENTE]
+
+1 - Contrato ([ID DO CONTRATO]): [ENDEREÇO COMPLETO]
+
+Essas informações estão corretas?"
+
+Use os campos: nome, contrato_id, endereco do retorno da função
+
+FLUXO DE ATENDIMENTO:
+1. Ao iniciar o atendimento, use a saudação atual apropriada para o horário (Bom dia/Boa tarde/Boa noite) e pergunte se a pessoa já é cliente da {provedor.nome}.
+2. Se for, solicite o CPF ou CNPJ dizendo: 'Por favor, me informe o CPF ou CNPJ para localizar seu cadastro.'
+3. Quando encontrar o cadastro do cliente, envie uma mensagem com os principais dados.
+4. Se não encontrar o cadastro, oriente o usuário a conferir os dados e tentar novamente.
+
+REGRAS GERAIS:
+- Responder apenas sobre assuntos relacionados à {provedor.nome}
+- Nunca inventar informações
+- Se não souber, diga: 'Desculpe, não posso te ajudar com isso. Encaminhando para um atendente humano.'
+- Cumprimente o cliente apenas na primeira mensagem do atendimento
+- Consulte o histórico da conversa antes de responder
+- NUNCA repita perguntas, saudações ou solicitações já feitas durante o atendimento
+- Se o cliente já informou um dado (ex: CPF, problema), não peça novamente
+- Sempre divida mensagens longas em blocos curtos, com no máximo 3 linhas cada
+- Após mostrar os dados do cliente, aguarde confirmação
+- Após confirmação, pergunte como pode ajudar
+- Nunca repita informações já ditas na conversa
+- Se o cliente já informou o que deseja, nunca pergunte novamente 'Como posso ajudar você hoje?'
+- Seja objetivo e profissional
+- Nunca peça novamente o CPF ou CNPJ se o cliente já informou durante a conversa
+- Sempre consulte o histórico da conversa antes de pedir dados novamente
+
+INTELIGÊNCIA CONTEXTUAL - INTERPRETAÇÃO NATURAL:
+- Use sua inteligência para entender a intenção do cliente SEM depender de palavras-chave específicas
+- Analise o contexto da conversa completa, não apenas palavras isoladas
+- Considere o perfil do cliente, situação e necessidades para tomar decisões autônomas
+- Seja proativo e inteligente nas interpretações, não robótico
+
+FLUXO PARA FATURAS/PAGAMENTOS:
+- Quando cliente solicitar pagamento/fatura (qualquer forma natural):
+  1. Se JÁ TEM CPF na conversa: Use gerar_fatura_completa diretamente
+  2. Se NÃO TEM CPF: Peça o CPF primeiro, depois execute o fluxo acima
+- Para tipo_pagamento, ANALISE INTELIGENTEMENTE:
+  * Cliente jovem/pressa/digital → provavelmente PIX
+  * Cliente tradicional/formal/comprovante → provavelmente boleto
+  * Contexto da conversa e perfil do cliente
+- NUNCA mostre dados fixos - SEMPRE use dados reais do SGP
+- SEMPRE avise que está buscando antes de executar a função
+
+REGRAS PARA ENCERRAMENTO DE ATENDIMENTO:
+- Após enviar fatura com sucesso, SEMPRE pergunte: "Posso te ajudar com mais alguma coisa?"
+- Se cliente responder: "não", "não preciso", "tá bom", "obrigado", "tchau" → IMEDIATAMENTE use encerrar_atendimento
+- NUNCA continue perguntando se cliente já demonstrou satisfação
+- Use encerrar_atendimento para limpar memória Redis automaticamente
+
+PROBLEMAS DE INTERNET:
+- Se o cliente relatar problemas de internet, utilize verificar_acesso_sgp para verificar o status
+- Só prossiga para as orientações após consultar o status da conexão
+
+MEMÓRIA DE CONTEXTO (REDIS):
+- USE A MEMÓRIA REDIS PARA LEMBRAR DO QUE JÁ FOI CONVERSADO
+- SE JÁ CONSULTOU O CLIENTE, NÃO PEÇA CPF/CNPJ NOVAMENTE
+- SE CLIENTE JÁ ESCOLHEU PIX/BOLETO, USE gerar_fatura_completa IMEDIATAMENTE
+- QUANDO CLIENTE PEDIR "PAGA FATURA" E JÁ TEM CPF, EXECUTE gerar_fatura_completa
+- NUNCA REPITA PERGUNTAS JÁ FEITAS
+- LEMBRE-SE DO QUE JÁ FOI CONVERSADO
+
+FLUXO FATURA SIMPLIFICADO:
+1. Cliente pede fatura/PIX/boleto
+2. Use gerar_fatura_completa com CPF/CNPJ do cliente (da memória Redis) e número do WhatsApp
+3. A função faz TUDO automaticamente: SGP + QR Code + WhatsApp + Botões + Mensagem de confirmação
+4. NÃO mostre dados da fatura manualmente - a função já faz isso
+5. NÃO confirme novamente - a função já confirma
+"""
+
+            # Recuperar memória Redis da conversa
+            conversation_memory = None
+            conversation_id = None
             
-            if conversation:
-                # Verificar se já perguntou se é cliente
-                already_asked_if_client = conversation.additional_attributes.get('asked_if_client', False)
-                logger.info(f"Conversa {conversation.id}: already_asked_if_client = {already_asked_if_client}")
+            if contexto and contexto.get('conversation'):
+                conversation = contexto['conversation']
+                conversation_id = conversation.id
                 
-                # Recuperar memória da conversa do Redis
-                conversation_memory = redis_memory_service.get_conversation_memory_sync(
-                    provedor_id=provedor.id,
-                    conversation_id=conversation.id
-                )
-                
-                if conversation_memory:
-                    logger.info(f"Memória da conversa {conversation.id} recuperada do Redis")
-                    # Usar dados da memória para contexto adicional
-                    if conversation_memory.get('context:client_info'):
-                        logger.info("Informações do cliente encontradas na memória")
-                else:
-                    logger.info(f"Nenhuma memória encontrada para conversa {conversation.id}")
-                    # Inicializar memória básica
-                    initial_memory = {
-                        'conversation_id': conversation.id,
-                        'provedor_id': provedor.id,
-                        'started_at': datetime.now().isoformat(),
-                        'message_count': 0,
-                        'context': {}
-                    }
-                    redis_memory_service.set_conversation_memory_sync(
+                # Recuperar memória Redis
+                try:
+                    conversation_memory = redis_memory_service.get_conversation_memory_sync(
                         provedor_id=provedor.id,
-                        conversation_id=conversation.id,
-                        data=initial_memory
+                        conversation_id=conversation_id
                     )
-            else:
-                logger.warning("Nenhuma conversa fornecida no contexto")
+                    if conversation_memory:
+                        logger.info(f"Memória Redis recuperada para conversa {conversation_id}: {conversation_memory}")
+                    else:
+                        logger.info(f"Nenhuma memória Redis encontrada para conversa {conversation_id}")
+                except Exception as e:
+                    logger.warning(f"Erro ao recuperar memória Redis: {e}")
             
-            system_prompt = self._build_system_prompt(provedor)
+            # Construir mensagens com histórico
+            messages = [{"role": "system", "content": system_prompt}]
             
-            # Converter mensagem para minúsculas ANTES de usar
+            # Adicionar contexto da conversa se disponível
+            if contexto and contexto.get('conversation'):
+                conversation = contexto['conversation']
+                
+                # Buscar mensagens recentes da conversa
+                try:
+                    from conversations.models import Message
+                    recent_messages = Message.objects.filter(
+                        conversation=conversation
+                    ).order_by('-created_at')[:10]  # Últimas 10 mensagens
+                    
+                    # Adicionar mensagens ao contexto (em ordem cronológica)
+                    for msg in reversed(recent_messages):
+                        if msg.is_from_customer:
+                            messages.append({"role": "user", "content": msg.content})
+                        else:
+                            messages.append({"role": "assistant", "content": msg.content})
+                except Exception as e:
+                    logger.warning(f"Erro ao recuperar histórico: {e}")
+            
+            # Adicionar informações da memória Redis ao prompt se disponível
+            if conversation_memory:
+                memory_info = ""
+                if conversation_memory.get('cpf_cnpj'):
+                    memory_info += f"\n🧠 MEMÓRIA: CPF/CNPJ do cliente: {conversation_memory['cpf_cnpj']}"
+                if conversation_memory.get('nome_cliente'):
+                    memory_info += f"\n🧠 MEMÓRIA: Nome do cliente: {conversation_memory['nome_cliente']}"
+                if conversation_memory.get('contrato_id'):
+                    memory_info += f"\n🧠 MEMÓRIA: Contrato ID: {conversation_memory['contrato_id']}"
+                if conversation_memory.get('numero_whatsapp'):
+                    memory_info += f"\n🧠 MEMÓRIA: WhatsApp: {conversation_memory['numero_whatsapp']}"
+                
+                if memory_info:
+                    messages[0]["content"] += f"\n\n{memory_info}\n\nUSE ESSAS INFORMAÇÕES DA MEMÓRIA! NÃO PEÇA NOVAMENTE!"
+            
+            # Adicionar mensagem atual
+            messages.append({"role": "user", "content": mensagem})
+            
+            # Definir ferramentas disponíveis
+            tools = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "consultar_cliente_sgp",
+                        "description": "Buscar dados do cliente no SGP usando CPF/CNPJ. Use após coletar o CPF do cliente.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "cpf_cnpj": {"type": "string", "description": "CPF ou CNPJ do cliente"}
+                            },
+                            "required": ["cpf_cnpj"]
+                        }
+                    }
+                },
+                {
+                    "type": "function", 
+                    "function": {
+                        "name": "gerar_fatura_completa",
+                        "description": "OBRIGATÓRIO: Esta é a ÚNICA forma de gerar faturas. Use sua inteligência para interpretar se o cliente prefere PIX (rápido/instantâneo) ou boleto (tradicional/físico). NUNCA mostre dados fixos. SEMPRE use esta função quando cliente pedir fatura ou pagamento.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "cpf_cnpj": {
+                                    "type": "string",
+                                    "description": "CPF ou CNPJ do cliente (use o que já foi informado na conversa)"
+                                },
+                                "contrato": {
+                                    "type": "string",
+                                    "description": "ID do contrato (opcional, se não fornecido usa o primeiro contrato)"
+                                },
+                                "numero_whatsapp": {
+                                    "type": "string",
+                                    "description": "Número do WhatsApp do cliente para envio automático"
+                                },
+                                "tipo_pagamento": {
+                                    "type": "string",
+                                    "description": "Analise a intenção do cliente: 'pix' para pagamento instantâneo/digital, 'boleto' para comprovante tradicional/físico. Use contexto e inteligência natural.",
+                                    "enum": ["pix", "boleto"]
+                                }
+                            },
+                            "required": ["cpf_cnpj", "tipo_pagamento"]
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "verificar_acesso_sgp",
+                        "description": "Verificar status da conexão do cliente. Use quando cliente relatar problemas de internet.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "contrato": {"type": "string", "description": "ID do contrato"}
+                            },
+                            "required": ["contrato"]
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "encerrar_atendimento",
+                        "description": "OBRIGATÓRIO: Use quando cliente disser 'não', 'não preciso', 'tá bom', 'obrigado' ou qualquer resposta indicando que não precisa de mais ajuda. Limpa a memória Redis e encerra o atendimento.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "motivo": {"type": "string", "description": "Motivo do encerramento (ex: 'cliente_satisfeito', 'nao_precisa_mais')"}
+                            },
+                            "required": ["motivo"]
+                        }
+                    }
+                }
+            ]
+            
+            # Detectar se cliente pediu fatura/pagamento
             mensagem_lower = mensagem.lower()
+            cliente_pediu_fatura = any(word in mensagem_lower for word in ['paga', 'fatura', 'pix', 'boleto', 'pagamento', 'pagar'])
             
-            # Instruções específicas para consulta de clientes
-            if 'cpf' in mensagem_lower or 'cnpj' in mensagem_lower or 'cliente' in mensagem_lower:
-                system_prompt += f"""
+            # Se cliente pediu fatura, adicionar instrução específica
+            if cliente_pediu_fatura:
+                system_prompt += """
 
-IMPORTANTE - CONSULTA DE CLIENTES:
-- Ao consultar um cliente pelo CPF/CNPJ, SEMPRE formate a resposta EXATAMENTE assim:
+🚨 CLIENTE PEDIU FATURA/PAGAMENTO:
+- IMPORTANTE: Antes de usar gerar_fatura_completa, você DEVE perguntar o CPF/CNPJ do cliente
+- Só use gerar_fatura_completa quando tiver o CPF/CNPJ válido (11 ou 14 dígitos)
+- Se cliente não informou CPF/CNPJ, pergunte: "Qual é o seu CPF ou CNPJ?"
+- Use gerar_fatura_completa apenas com dados válidos:
+  * cpf_cnpj: CPF/CNPJ completo e válido (11 ou 14 dígitos)
+  * tipo_pagamento: "pix" ou "boleto" baseado na intenção do cliente
+- A função faz TUDO automaticamente: SGP + envio via WhatsApp + Mensagem específica
+- NÃO envie mensagens adicionais - a função já confirma tudo
+"""
+            
+            # Forçar uso de ferramentas quando necessário
+            force_tools = any(word in mensagem_lower for word in ['pix', 'boleto', 'fatura', 'pagar'])
+            
+            response = openai.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                max_tokens=self.max_tokens,
+                temperature=self.temperature,
+                tools=tools,
+                tool_choice="required" if force_tools else "auto"
+            )
+            
+            # Processar se a IA chamou alguma ferramenta
+            if response.choices[0].message.tool_calls:
+                # Processar ferramentas chamadas pela IA
+                for tool_call in response.choices[0].message.tool_calls:
+                    function_name = tool_call.function.name
+                    function_args = json.loads(tool_call.function.arguments)
+                    
+                    logger.info(f"IA chamou função: {function_name} com argumentos: {function_args}")
+                    
+                    # Executar a função chamada pela IA
+                    function_result = self._execute_sgp_function(provedor, function_name, function_args, contexto)
+                    
+                    # Salvar informações importantes na memória Redis
+                    if conversation_id and function_result.get('success'):
+                        memory_updates = {}
+                        
+                        # Salvar dados do cliente se foi consultado
+                        if function_name == "consultar_cliente_sgp":
+                            if function_result.get('nome'):
+                                memory_updates['nome_cliente'] = function_result['nome']
+                            if function_result.get('contrato_id'):
+                                memory_updates['contrato_id'] = function_result['contrato_id']
+                            if function_args.get('cpf_cnpj'):
+                                memory_updates['cpf_cnpj'] = function_args['cpf_cnpj']
+                        
+                        # Salvar dados da fatura se foi gerada
+                        elif function_name == "gerar_fatura_completa":
+                            if function_args.get('cpf_cnpj'):
+                                memory_updates['cpf_cnpj'] = function_args['cpf_cnpj']
+                            if function_args.get('numero_whatsapp'):
+                                memory_updates['numero_whatsapp'] = function_args['numero_whatsapp']
+                            if function_result.get('fatura_id'):
+                                memory_updates['ultima_fatura_id'] = function_result['fatura_id']
+                        
+                        # Salvar número do WhatsApp se disponível no contexto
+                        if contexto and contexto.get('conversation') and contexto['conversation'].contact:
+                            memory_updates['numero_whatsapp'] = contexto['conversation'].contact.phone
+                        
+                        # Atualizar memória Redis se há dados para salvar
+                        if memory_updates:
+                            try:
+                                # Mesclar com memória existente
+                                current_memory = conversation_memory or {}
+                                current_memory.update(memory_updates)
+                                
+                                redis_memory_service.set_conversation_memory_sync(
+                                    provedor_id=provedor.id,
+                                    conversation_id=conversation_id,
+                                    data=current_memory
+                                )
+                                logger.info(f"Memória Redis atualizada para conversa {conversation_id}: {memory_updates}")
+                            except Exception as e:
+                                logger.warning(f"Erro ao salvar na memória Redis: {e}")
+                    
+                    # Adicionar resultado da função à conversa
+                    messages.append({
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [tool_call]
+                    })
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": json.dumps(function_result, ensure_ascii=False)
+                    })
+                
+                # Verificar se gerar_fatura_completa foi executada
+                fatura_executada = False
+                fatura_sucesso = False
+                resposta = None
+                
+                for tool_call in response.choices[0].message.tool_calls:
+                    if tool_call.function.name == "gerar_fatura_completa":
+                        fatura_executada = True
+                        # Verificar se o resultado indica sucesso
+                        for msg in messages:
+                            if msg.get("role") == "tool" and msg.get("tool_call_id") == tool_call.id:
+                                try:
+                                    result_data = json.loads(msg["content"])
+                                    logger.info(f"Resultado da função gerar_fatura_completa: {result_data}")
+                                    if result_data.get("success") and result_data.get("mensagem_formatada"):
+                                        fatura_sucesso = True
+                                        # Usar diretamente a mensagem da função
+                                        resposta = result_data["mensagem_formatada"]
+                                        logger.info(f"Fatura enviada com sucesso - usando mensagem direta: {resposta}")
+                                        break
+                                    elif result_data.get("success") is False:
+                                        # Função executou mas com erro - usar mensagem de erro específica
+                                        resposta = "Desculpe, houve um problema ao processar sua fatura. Tente novamente em alguns instantes."
+                                        logger.warning(f"Erro na função gerar_fatura_completa: {result_data.get('erro', 'Erro desconhecido')}")
+                                        break
+                                except Exception as e:
+                                    logger.error(f"Erro ao processar resultado da função: {e}")
+                                    pass
+                        break
+                
+                # Decidir se fazer segunda chamada à OpenAI
+                if fatura_executada:
+                    # Se fatura foi executada (com sucesso ou erro), não fazer segunda chamada
+                    if not resposta:
+                        resposta = "Desculpe, ocorreu um erro ao processar sua solicitação. Tente novamente."
+                else:
+                    # Se não foi gerar_fatura_completa, fazer segunda chamada à OpenAI
+                    final_response = openai.chat.completions.create(
+                        model=self.model,
+                        messages=messages,
+                        max_tokens=self.max_tokens,
+                        temperature=self.temperature
+                    )
+                    resposta = final_response.choices[0].message.content.strip()
+            else:
+                # Não há tool calls, usar resposta direta da IA
+                resposta = response.choices[0].message.content.strip()
+            
+            # Validar se não está usando dados fixos comuns
+            dados_fixos_comuns = ["123456", "999999", "000000", "XXXX-XXXX"]
+            for dado in dados_fixos_comuns:
+                if dado in resposta:
+                    logger.error(f"ERRO: IA usando dados fixos: {dado}")
+                    resposta = "❌ Erro interno: Preciso consultar o sistema primeiro. Me informe seu CPF/CNPJ para buscar seus dados reais."
+                    break
+            
+            return {
+                "success": True,
+                "resposta": resposta,
+                "model": self.model,
+                "provedor": provedor.nome
+            }
+            
+        except Exception as e:
+            logger.error(f"Erro ao gerar resposta: {e}")
+            return {
+                "success": False,
+                "erro": str(e),
+                "provedor": provedor.nome
+            }
 
-**DADOS DO CLIENTE:**
-*NOME_DO_CLIENTE*
+    # Método antigo removido - usando apenas o novo prompt simplificado
 
-Se tiver múltiplos contratos, liste assim:
-1 - Contrato (ID): *ENDEREÇO*
-2 - Contrato (ID): *ENDEREÇO*
 
-**DADOS DA FATURA (quando solicitado):**
-💳 *Sua fatura está em aberto:* (quando status = em aberto)
-💳 *Sua fatura está em atraso:* (quando status = em atraso)
+            # Instruções para uso dos serviços de fatura
+            if 'fatura' in mensagem_lower or 'boleto' in mensagem_lower or 'pix' in mensagem_lower:
+                system_prompt += """
 
-Fatura ID: [ID_DA_FATURA]
-Vencimento: [DATA_VENCIMENTO]
-Valor: R$ [VALOR]
-
-- IMPORTANTE: Após mostrar os dados da fatura, SEMPRE envie automaticamente via WhatsApp com botões interativos
-- Use a função _send_fatura_via_uazapi para enviar a mensagem com botões para PIX, linha digitável e acesso online
-- NÃO mostre dados desnecessários como MAC, senhas, configurações técnicas, etc.
-- Foque apenas nas informações essenciais para o atendimento.
-- SEMPRE use o formato exato acima para manter consistência.
+IMPORTANTE - FERRAMENTA DE FATURA:
+- Para gerar faturas, use SEMPRE a ferramenta 'gerar_fatura_completa'
+- Fluxo obrigatório:
+  1. Use gerar_fatura_completa(contrato_id) 
+  2. A ferramenta automaticamente busca dados no SGP via /api/ura/fatura2via/
+  3. A ferramenta automaticamente gera QR code PIX (se disponível)
+  4. A ferramenta automaticamente envia via WhatsApp com botões interativos
+  5. A função já confirma automaticamente o envio
+- NUNCA pule etapas ou use dados mockados
+- Use APENAS dados reais retornados pela ferramenta
+- A ferramenta integra automaticamente: fatura_service.py + qr_code_service.py + sgp_client.py + uazapi_client.py
 """
             
             # Verificar se a mensagem indica necessidade de perguntar se é cliente
@@ -1162,6 +1504,23 @@ Valor: R$ [VALOR]
                 'sem internet', 'internet parou', 'não funciona', 'problema', 'chamado', 'reclamação',
                 'técnico', 'instalação', 'cancelar', 'mudar plano', 'alterar', 'consulta'
             ])
+            
+            # Instruções específicas para problemas técnicos
+            if any(keyword in mensagem_lower for keyword in [
+                'sem internet', 'internet parou', 'não funciona', 'problema', 'técnico', 'conexão'
+            ]):
+                system_prompt += """
+
+IMPORTANTE - PROBLEMAS TÉCNICOS:
+- Para problemas de conexão, use APENAS a ferramenta 'verificar_acesso_sgp'
+- Fluxo obrigatório:
+  1. Use consultar_cliente_sgp para identificar o contrato
+  2. Use verificar_acesso_sgp(contrato_id) para verificar status da conexão
+  3. Apresente o resultado ao cliente
+  4. Se necessário, encaminhe para suporte técnico
+- NÃO use outras ferramentas para problemas técnicos
+- Foque apenas na verificação de status da conexão
+"""
             
             # Verificar se o cliente forneceu CPF/CNPJ na mensagem
             cpf_cnpj_detected = self._detect_cpf_cnpj(mensagem)
@@ -1186,7 +1545,7 @@ IMPORTANTE - ENVIO AUTOMÁTICO DE FATURA:
   4. Mostre os dados formatados na conversa
   5. Envie automaticamente via WhatsApp com botões interativos
   6. Use _send_fatura_via_uazapi para enviar a mensagem com botões
-  7. Confirme: "✅ Fatura enviada automaticamente via WhatsApp com botões interativos!"
+  7. A função já confirma automaticamente o envio
 """
             
             # Adicionar instrução específica para perguntar se é cliente apenas quando necessário
@@ -1290,27 +1649,41 @@ REGRA CRÍTICA PARA MEMÓRIA REDIS:
 
 FORMATO OBRIGATÓRIO PARA RESPOSTAS DAS FERRAMENTAS SGP:
 
+ATENÇÃO CRÍTICA: NUNCA use os formatos antigos:
+- ❌ NUNCA: "ℹ *Dados do Cliente:*"
+- ❌ NUNCA use nomes fixos - SEMPRE use dados reais do SGP
+- ❌ NUNCA: "🔒 *Status do Contrato:* Suspenso"
+- ❌ NUNCA: "*Cliente Encontrado*"
+- ❌ NUNCA: "Como posso te ajudar hoje, Pedro?"
+
 **Para consultar_cliente_sgp:**
-- SEMPRE formate EXATAMENTE assim:
+- SEMPRE formate EXATAMENTE assim (SEM EMOJIS):
+
+Para UM contrato:
+Contrato:
 *NOME_DO_CLIENTE*
+
 1 - Contrato (ID): *ENDEREÇO*
-2 - Contrato (ID): *ENDEREÇO* (se houver múltiplos)
+
+Para MÚLTIPLOS contratos:
+Contratos:
+*NOME_DO_CLIENTE*
+
+1 - Contrato (ID): *ENDEREÇO*
+
+*NOME_DO_CLIENTE*
+
+2 - Contrato (ID): *ENDEREÇO*
 
 **Para gerar_fatura_completa:**
-- SEMPRE formate EXATAMENTE assim:
-💳 *Sua fatura está em aberto:* (quando status = em aberto)
-💳 *Sua fatura está em atraso:* (quando status = em atraso)
-
-Fatura ID: [ID_DA_FATURA]
-Vencimento: [DATA_VENCIMENTO]
-Valor: R$ [VALOR]
-
-- IMPORTANTE: Após mostrar os dados da fatura, SEMPRE envie automaticamente a fatura via WhatsApp com botões interativos para:
+- A função faz TUDO automaticamente - NÃO precisa formatar manualmente
+- NÃO mostre dados da fatura - a função já retorna a mensagem pronta
+- A função já envia automaticamente via WhatsApp com botões para:
   * Copiar chave PIX
   * Copiar linha digitável  
   * Acessar fatura online
 - Use a função _send_fatura_via_uazapi para enviar a mensagem com botões
-- Confirme na conversa: "✅ Fatura enviada automaticamente via WhatsApp com botões interativos!"
+- A função já confirma automaticamente o envio
 
 **Para todas as faturas:**
 - SEMPRE envie automaticamente via WhatsApp após gerar
@@ -1318,6 +1691,20 @@ Valor: R$ [VALOR]
 - Inclua botões para PIX, linha digitável e acesso online
 - Confirme na conversa que foi enviada
 - Se falhar no envio, informe ao cliente mas continue o atendimento
+"""
+            
+            # Ferramentas disponíveis
+            system_prompt += """
+
+FERRAMENTAS:
+- consultar_cliente_sgp(cpf_cnpj) → buscar cliente
+- gerar_fatura_completa(contrato) → gerar e enviar fatura
+- verificar_acesso_sgp(contrato) → status conexão
+
+REGRAS FINAIS:
+- Execute ferramentas quando prometido
+- Não repita perguntas já feitas
+- Prossiga no fluxo sem voltar
 """
             
             # Construir o prompt do usuário
@@ -1335,7 +1722,7 @@ Valor: R$ [VALOR]
                     "type": "function",
                     "function": {
                         "name": "consultar_cliente_sgp",
-                        "description": "Consulta dados reais do cliente no SGP usando CPF/CNPJ. SEMPRE use esta ferramenta quando receber CPF/CNPJ. IMPORTANTE: Formate a resposta EXATAMENTE assim: *NOME_DO_CLIENTE* seguido de 1 - Contrato (ID): *ENDEREÇO* para cada contrato.",
+                        "description": "Consulta dados reais do cliente no SGP usando CPF/CNPJ. SEMPRE use esta ferramenta quando receber CPF/CNPJ. FORMATO OBRIGATÓRIO: Para UM contrato use 'Contrato:' seguido de '*NOME*' e '1 - Contrato (ID): *ENDEREÇO*'. Para MÚLTIPLOS contratos use 'Contratos:' seguido da lista. NUNCA use emojis ℹ 👤 🔒 ou frases como 'Cliente Encontrado', 'Nome:', 'Status do Contrato:'.",
                         "parameters": {
                             "type": "object",
                             "properties": {
@@ -1369,37 +1756,93 @@ Valor: R$ [VALOR]
                     "type": "function",
                     "function": {
                         "name": "gerar_fatura_completa",
-                        "description": "Gera fatura completa com boleto, PIX, QR code e todos os dados de pagamento. Use quando cliente pedir fatura/boleto. IMPORTANTE: Após gerar a fatura, SEMPRE envie automaticamente via WhatsApp com botões interativos para PIX, linha digitável e acesso online. Formate a resposta EXATAMENTE assim: 💳 *Sua fatura está em aberto:* ou 💳 *Sua fatura está em atraso:* seguido de Fatura ID, Vencimento e Valor.",
+                        "description": "OBRIGATÓRIO: Esta é a ÚNICA forma de gerar faturas. IMPORTANTE: Só use quando tiver CPF/CNPJ válido (11 ou 14 dígitos). Usa endpoint /api/ura/fatura2via/ para buscar dados reais do SGP e envia automaticamente via WhatsApp com QR Code PNG e botão Copiar Chave PIX. NUNCA mostre dados fixos. SEMPRE use esta função quando cliente pedir fatura/PIX/boleto.",
                         "parameters": {
                             "type": "object",
                             "properties": {
+                                "cpf_cnpj": {
+                                    "type": "string",
+                                    "description": "CPF ou CNPJ do cliente (use o que já foi informado na conversa)"
+                                },
                                 "contrato": {
                                     "type": "string",
-                                    "description": "ID do contrato"
+                                    "description": "ID do contrato (opcional, se não fornecido usa o primeiro contrato)"
+                                },
+                                "numero_whatsapp": {
+                                    "type": "string",
+                                    "description": "Número do WhatsApp do cliente para envio automático"
                                 }
                             },
-                            "required": ["contrato"]
+                            "required": ["cpf_cnpj"]
                         }
                     }
                 },
                 {
                     "type": "function",
                     "function": {
-                        "name": "gerar_pix_qrcode",
-                        "description": "Gera PIX e QR code para pagamento de uma fatura específica. Use quando precisar apenas dos dados PIX.",
+                        "name": "enviar_qr_code_pix",
+                        "description": "Envia apenas QR Code PIX usando qr_code_service.py. Use quando cliente quiser apenas o QR Code.",
                         "parameters": {
                             "type": "object",
                             "properties": {
-                                "fatura_id": {
+                                "cpf_cnpj": {
                                     "type": "string",
-                                    "description": "ID da fatura para gerar PIX"
+                                    "description": "CPF ou CNPJ do cliente"
+                                },
+                                "contrato": {
+                                    "type": "string",
+                                    "description": "ID do contrato"
+                                },
+                                "numero_whatsapp": {
+                                    "type": "string",
+                                    "description": "Número do WhatsApp do cliente"
                                 }
                             },
-                            "required": ["fatura_id"]
+                            "required": ["cpf_cnpj"]
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "enviar_boleto_pdf",
+                        "description": "Envia boleto em PDF usando fatura_service.py. Use quando cliente escolher boleto.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "cpf_cnpj": {
+                                    "type": "string",
+                                    "description": "CPF ou CNPJ do cliente"
+                                },
+                                "contrato": {
+                                    "type": "string",
+                                    "description": "ID do contrato"
+                                },
+                                "numero_whatsapp": {
+                                    "type": "string",
+                                    "description": "Número do WhatsApp do cliente"
+                                }
+                            },
+                            "required": ["cpf_cnpj"]
                         }
                     }
                 }
             ]
+            
+            # FORÇAR USO DE FERRAMENTAS quando cliente pedir fatura/PIX/boleto
+            mensagem_lower = mensagem.lower()
+            force_tools = any(word in mensagem_lower for word in ['pix', 'boleto', 'fatura', 'pagar', 'pagamento'])
+            
+            # Adicionar instrução específica para faturas
+            if force_tools:
+                system_prompt += """
+
+⚠️ ATENÇÃO - CLIENTE PEDIU FATURA/PAGAMENTO:
+- ANTES de usar qualquer ferramenta de fatura, você DEVE perguntar o CPF/CNPJ
+- Exemplo: "Para gerar sua fatura, preciso do seu CPF ou CNPJ. Pode me informar?"
+- Só use gerar_fatura_completa quando tiver um CPF/CNPJ válido (11 ou 14 dígitos)
+- NUNCA tente gerar fatura sem CPF/CNPJ válido
+"""
             
             # Fazer chamada inicial COM ferramentas disponíveis
             response = openai.chat.completions.create(
@@ -1408,7 +1851,7 @@ Valor: R$ [VALOR]
                 max_tokens=self.max_tokens,
                 temperature=self.temperature,
                 tools=tools,
-                tool_choice="auto"
+                tool_choice="required" if force_tools else "auto"
             )
             
             # Processar se a IA chamou alguma ferramenta
@@ -1421,7 +1864,7 @@ Valor: R$ [VALOR]
                     logger.info(f"IA chamou função: {function_name} com argumentos: {function_args}")
                     
                     # Executar a função chamada pela IA
-                    function_result = self._execute_sgp_function(provedor, function_name, function_args)
+                    function_result = self._execute_sgp_function(provedor, function_name, function_args, contexto)
                     
                     # Adicionar resultado da função à conversa
                     messages.append({
@@ -1456,6 +1899,12 @@ Valor: R$ [VALOR]
             resposta = response.choices[0].message.content.strip()
             logger.info(f"Resposta gerada para provedor {provedor.nome}: {resposta[:100]}...")
             
+            # Validação de dados fixos removida - usando apenas dados dinâmicos
+            
+            # VALIDAÇÃO E CORREÇÃO DO FORMATO - FORÇAR FORMATO CORRETO
+            resposta = self._corrigir_formato_resposta(resposta)
+            logger.info(f"Resposta após correção de formato: {resposta[:100]}...")
+            
             # ATUALIZAR MEMÓRIA DA CONVERSA NO REDIS
             if conversation:
                 # Atualizar contador de mensagens
@@ -1466,8 +1915,9 @@ Valor: R$ [VALOR]
                 
                 message_count = current_memory.get('message_count', 0) + 1
                 
-                # Salvar contexto da mensagem atual
+                # Salvar contexto da mensagem atual (preservando dados existentes)
                 message_context = {
+                    **current_memory,  # Preservar dados existentes
                     'message_count': message_count,
                     'last_message': {
                         'content': mensagem[:200] + "..." if len(mensagem) > 200 else mensagem,
@@ -1483,12 +1933,14 @@ Valor: R$ [VALOR]
                         'user_message': mensagem,
                         'ai_response': resposta,
                         'timestamp': datetime.now().isoformat()
-                    }
+                    },
+                    'last_updated': datetime.now().isoformat()
                 }
                 
-                # Se detectou CPF/CNPJ, salvar na memória
+                # Se detectou CPF/CNPJ, salvar na memória (preservar se já existir)
                 if cpf_cnpj_detected:
                     message_context['context:cpf_cnpj_detected'] = cpf_cnpj_detected
+                    logger.info(f"CPF/CNPJ salvo na memória: {cpf_cnpj_detected}")
                 
                 # Atualizar memória
                 redis_memory_service.set_conversation_memory_sync(
@@ -1498,6 +1950,7 @@ Valor: R$ [VALOR]
                 )
                 
                 logger.info(f"Memória da conversa {conversation.id} atualizada no Redis")
+                logger.info(f"CPF/CNPJ na memória: {message_context.get('context:cpf_cnpj_detected', 'Não encontrado')}")
             
             # LÓGICA DE TRANSFERÊNCIA INTELIGENTE PARA EQUIPES
             if conversation:
@@ -1606,6 +2059,21 @@ IMPORTANTE - EQUIPE NÃO DISPONÍVEL:
                 if not conversation:
                     logger.warning("Nenhuma conversa fornecida para marcar asked_if_client")
             
+            # SALVAR RESPOSTA DA IA NO REDIS
+            if contexto and contexto.get('conversation') and resposta:
+                try:
+                    conversation = contexto['conversation']
+                    redis_memory_service.add_message_to_conversation_sync(
+                        provedor_id=provedor.id,
+                        conversation_id=conversation.id,
+                        sender='ai',
+                        content=resposta,
+                        message_type='text'
+                    )
+                    logger.info(f"✅ Resposta da IA salva no Redis: {resposta[:50]}...")
+                except Exception as e:
+                    logger.warning(f"Erro ao salvar resposta da IA no Redis: {e}")
+            
             return {
                 "success": True,
                 "resposta": resposta,
@@ -1692,92 +2160,43 @@ IMPORTANTE - EQUIPE NÃO DISPONÍVEL:
 
     def _send_fatura_via_uazapi(self, provedor: Provedor, numero_whatsapp: str, dados_fatura: dict) -> bool:
         """
-        Envia fatura via Uazapi com botões interativos para PIX e linha digitável
+        Envia fatura via FaturaService que já tem toda a lógica implementada
         """
         try:
-            from .uazapi_client import UazapiClient
+            from .fatura_service import FaturaService
             
-            # Obter configurações do Uazapi do provedor
-            integracao = provedor.integracoes_externas or {}
-            uazapi_url = integracao.get('uazapi_url')
-            uazapi_token = integracao.get('uazapi_token')
+            # Criar instância do FaturaService
+            fatura_service = FaturaService()
             
-            if not all([uazapi_url, uazapi_token]):
-                logger.warning("Configurações do Uazapi não encontradas")
-                return False
-            
-            # Criar cliente Uazapi
-            uazapi = UazapiClient(base_url=uazapi_url, token=uazapi_token)
-            
-            # Preparar dados da fatura
-            fatura_id = dados_fatura.get('fatura_id', 'N/A')
-            valor = dados_fatura.get('valor', 0)
-            vencimento = dados_fatura.get('vencimento', 'N/A')
-            status_fatura = dados_fatura.get('status_fatura', 'em aberto')
-            codigo_pix = dados_fatura.get('codigo_pix')
-            linha_digitavel = dados_fatura.get('linha_digitavel')
-            link_fatura = dados_fatura.get('link_fatura')
-            
-            # Formatar valor
-            valor_formatado = f"R$ {valor:.2f}".replace('.', ',') if valor else "R$ 0,00"
-            
-            # Formatar vencimento
-            vencimento_formatado = vencimento
-            if vencimento and '-' in str(vencimento):
-                try:
-                    from datetime import datetime
-                    vencimento_date = datetime.strptime(vencimento, "%Y-%m-%d")
-                    vencimento_formatado = vencimento_date.strftime("%d/%m/%Y")
-                except:
-                    pass
-            
-            # Texto principal da mensagem
-            texto_principal = f"""*Sua fatura esta {status_fatura}:*
-
-Fatura ID: {fatura_id}
-Vencimento: {vencimento_formatado}
-Valor: {valor_formatado}"""
-            
-            # Preparar botões
-            choices = []
-            
-            # Botão para copiar chave PIX (se disponível)
-            if codigo_pix:
-                choices.append(f"Copiar Chave PIX|copy:{codigo_pix}")
-            
-            # Botão para copiar linha digitável (se disponível)
-            if linha_digitavel:
-                choices.append(f"Copiar Linha Digitavel|copy:{linha_digitavel}")
-            
-            # Botão para acessar fatura online (se disponível)
-            if link_fatura:
-                choices.append(f"Ver Fatura Online|{link_fatura}")
-            
-            # Se não há botões disponíveis, adicionar botão genérico
-            if not choices:
-                choices.append("Ver Detalhes da Fatura|fatura_info")
-            
-            # Enviar mensagem com botões
-            payload = {
-                "number": numero_whatsapp,
-                "type": "button",
-                "text": texto_principal,
-                "choices": choices,
-                "footerText": "Escolha uma opção para facilitar seu pagamento"
+            # Converter dados para o formato esperado pelo FaturaService
+            # O FaturaService espera os dados no formato do SGP
+            dados_sgp = {
+                'links': [{
+                    'fatura': dados_fatura.get('fatura_id', 'N/A'),
+                    'valor': dados_fatura.get('valor', 0),
+                    'vencimento': dados_fatura.get('vencimento', 'N/A'),
+                    'codigopix': dados_fatura.get('codigo_pix'),
+                    'linhadigitavel': dados_fatura.get('linha_digitavel'),
+                    'link': dados_fatura.get('link_fatura')
+                }]
             }
             
-            # Enviar via Uazapi
-            response = uazapi.send_menu(payload)
+            # Usar o método do FaturaService que já está funcionando
+            resultado = fatura_service.enviar_fatura_uazapi(
+                provedor=provedor,
+                numero_whatsapp=numero_whatsapp,
+                dados_fatura=dados_sgp
+            )
             
-            if response and response.get('status') == 'success':
-                logger.info(f"Fatura enviada via Uazapi para {numero_whatsapp}")
+            if resultado:
+                logger.info(f"Fatura enviada via FaturaService para {numero_whatsapp}")
                 return True
             else:
-                logger.error(f"Erro ao enviar fatura via Uazapi: {response}")
+                logger.error(f"Falha ao enviar fatura via FaturaService para {numero_whatsapp}")
                 return False
                 
         except Exception as e:
-            logger.error(f"Erro ao enviar fatura via Uazapi: {str(e)}")
+            logger.error(f"Erro ao enviar fatura via FaturaService: {str(e)}")
             return False
 
 openai_service = OpenAIService() 

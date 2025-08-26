@@ -4,6 +4,7 @@ import ConversationList from './components/ConversationList';
 import ChatArea from './components/ChatArea';
 import ConversationsPage from './components/ConversationsPage';
 import Dashboard from './components/Dashboard';
+import DashboardPrincipal from './components/DashboardPrincipal';
 import Settings from './components/Settings';
 import UserManagement from './components/UserManagement';
 import CompanyManagement from './components/CompanyManagement';
@@ -34,9 +35,14 @@ import ConversationRecovery from './components/ConversationRecovery';
 import { io } from 'socket.io-client';
 import axios from 'axios';
 import { AlertTriangle } from 'lucide-react';
+import { NotificationProvider } from './contexts/NotificationContext';
 
-// Configurar baseURL do axios para usar URLs absolutas do backend
-axios.defaults.baseURL = 'http://localhost:8010';
+// Configurar axios para usar URLs relativas (será resolvido pelo proxy do Vite)
+// axios.defaults.baseURL = 'http://192.168.100.55:8010'; // REMOVIDO - usar URLs relativas
+
+// Forçar limpeza de qualquer baseURL em cache
+axios.defaults.baseURL = '';
+console.log('# Debug logging removed for security Axios configurado para usar URLs relativas');
 
 // Interceptor global do Axios para adicionar o token do usuário logado
 axios.interceptors.request.use(config => {
@@ -75,7 +81,7 @@ function ProvedorAppWrapper({ userRole, user, handleLogout, handleChangelog, han
       <div className="flex-1 flex flex-col overflow-y-auto">
         <Topbar onLogout={handleLogout} onChangelog={handleChangelog} onNotifications={handleNotifications} onMenuClick={() => setSidebarOpen(true)} />
         <Routes>
-          <Route path="dashboard" element={<Dashboard provedorId={provedorId} />} />
+                          <Route path="dashboard" element={<DashboardPrincipal provedorId={provedorId} />} />
           <Route path="conversas" element={<ConversasDashboard provedorId={provedorId} />} />
           <Route path="conversas-dashboard" element={<ConversasDashboard provedorId={provedorId} />} />
           <Route path="contacts" element={<Contacts provedorId={provedorId} />} />
@@ -86,7 +92,7 @@ function ProvedorAppWrapper({ userRole, user, handleLogout, handleChangelog, han
               provedorId={provedorId}
             />
           } />
-          <Route path="reports" element={<Dashboard provedorId={provedorId} />} />
+          <Route path="reports" element={<DashboardPrincipal provedorId={provedorId} />} />
           <Route path="settings" element={<Settings provedorId={provedorId} />} />
           <Route path="users" element={<UserManagement provedorId={provedorId} />} />
           <Route path="equipes" element={<TeamsPage />} />
@@ -149,8 +155,13 @@ function App() {
 
   // Debug: Log do estado do usuário
   useEffect(() => {
-    console.log('App - Estado atual:', { user, userRole, authLoading, provedorId });
+    // Removidos logs de debug para evitar sobrecarga
   }, [user, userRole, authLoading, provedorId]);
+
+  // Debug: Monitorar mudanças no provedorId
+  useEffect(() => {
+    // Removidos logs de debug para evitar sobrecarga
+  }, [provedorId]);
 
   // Salvar conversa selecionada no localStorage quando mudar
   useEffect(() => {
@@ -187,36 +198,17 @@ function App() {
           setUser({ ...userData, token });
           const tipo = userData.role || userData.user_type;
           setUserRole(tipo);
+          
+          // Definir provedorId se disponível
+          if (userData.provedor_id) {
+            setProvedorId(userData.provedor_id);
+            console.log('ProvedorId definido:', userData.provedor_id);
+          }
+          
           setAuthLoading(false);
           
-          // Conectar ao WebSocket do usuário para status online/offline
-          if (userData.id) {
-            const wsUrl = `ws://${window.location.hostname}:8010/ws/user/${userData.id}/`;
-            const userWs = new WebSocket(wsUrl);
-            
-            // Enviar status online ao conectar
-            userWs.onopen = () => {
-              userWs.send(JSON.stringify({
-                type: 'status_update',
-                is_online: true
-              }));
-            };
-            
-            // Enviar ping a cada 30 segundos para manter conexão
-            const pingInterval = setInterval(() => {
-              if (userWs.readyState === WebSocket.OPEN) {
-                userWs.send(JSON.stringify({ type: 'ping' }));
-              }
-            }, 30000);
-            
-            // Limpar interval ao desmontar
-            return () => {
-              clearInterval(pingInterval);
-              if (userWs.readyState === WebSocket.OPEN) {
-                userWs.close();
-              }
-            };
-          }
+          // REMOVIDO: WebSocket desnecessário que estava causando reconexões
+          // O WebSocket será gerenciado pelos componentes específicos
         })
         .catch((error) => {
           console.error('Erro ao buscar usuário:', error);
@@ -272,34 +264,8 @@ function App() {
     const tipo = userData.role || userData.user_type;
     setUserRole(tipo);
     
-    // Conectar ao WebSocket do usuário para status online/offline
-    if (userData.id) {
-      const wsUrl = `ws://${window.location.hostname}:8010/ws/user/${userData.id}/`;
-      const userWs = new WebSocket(wsUrl);
-      
-      // Enviar status online ao conectar
-      userWs.onopen = () => {
-        userWs.send(JSON.stringify({
-          type: 'status_update',
-          is_online: true
-        }));
-      };
-      
-      // Enviar ping a cada 30 segundos para manter conexão
-      const pingInterval = setInterval(() => {
-        if (userWs.readyState === WebSocket.OPEN) {
-          userWs.send(JSON.stringify({ type: 'ping' }));
-        }
-      }, 30000);
-      
-      // Limpar interval ao desmontar
-      return () => {
-        clearInterval(pingInterval);
-        if (userWs.readyState === WebSocket.OPEN) {
-          userWs.close();
-        }
-      };
-    }
+    // REMOVIDO: WebSocket desnecessário que estava causando reconexões
+    // O WebSocket será gerenciado pelos componentes específicos
   };
 
   const handleLogout = () => {
@@ -372,31 +338,35 @@ function App() {
         <Router>
           <Routes>
             <Route path="/superadmin/*" element={
-              <SuperadminRoute>
-                <div className="h-screen bg-background text-foreground flex overflow-hidden">
-                  <SuperadminSidebar onLogout={handleLogout} />
-                  <div className="flex-1 flex flex-col overflow-hidden">
-                    <Topbar onLogout={handleLogout} onChangelog={handleChangelog} onNotifications={handleNotifications} />
-                    <SuperadminDashboard onLogout={handleLogout} />
+              <NotificationProvider>
+                <SuperadminRoute>
+                  <div className="h-screen bg-background text-foreground flex overflow-hidden">
+                    <SuperadminSidebar onLogout={handleLogout} />
+                    <div className="flex-1 flex flex-col overflow-hidden">
+                      <Topbar onLogout={handleLogout} onChangelog={handleChangelog} onNotifications={handleNotifications} />
+                      <SuperadminDashboard onLogout={handleLogout} />
+                    </div>
                   </div>
-                </div>
-              </SuperadminRoute>
+                </SuperadminRoute>
+              </NotificationProvider>
             } />
             {/* Rotas multi-tenant para provedores */}
             <Route path="/app/accounts/:provedorId/*" element={
-              <ProvedorAppWrapper
-                userRole={userRole}
-                user={user}
-                handleLogout={handleLogout}
-                handleChangelog={handleChangelog}
-                handleNotifications={handleNotifications}
-                selectedConversation={selectedConversation}
-                setSelectedConversation={setSelectedConversation}
-                providerMenu={providerMenu}
-                setProviderMenu={setProviderMenu}
-                whatsappDisconnected={whatsappDisconnected}
-                setWhatsappDisconnected={setWhatsappDisconnected}
-              />
+              <NotificationProvider>
+                <ProvedorAppWrapper
+                  userRole={userRole}
+                  user={user}
+                  handleLogout={handleLogout}
+                  handleChangelog={handleChangelog}
+                  handleNotifications={handleNotifications}
+                  selectedConversation={selectedConversation}
+                  setSelectedConversation={setSelectedConversation}
+                  providerMenu={providerMenu}
+                  setProviderMenu={setProviderMenu}
+                  whatsappDisconnected={whatsappDisconnected}
+                  setWhatsappDisconnected={setWhatsappDisconnected}
+                />
+              </NotificationProvider>
             } />
             {/* Redirecionamento padrão para login ou dashboard */}
             <Route path="*" element={<SafeRedirect user={user} />} />

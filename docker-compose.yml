@@ -1,0 +1,48 @@
+
+services:
+
+  carros_web:
+    build: .
+    volumes:
+      - .:/app
+    restart: always
+    ports:
+      - "8000:8000"
+    depends_on:
+      carros_db: 
+        condition: service_healthy
+    env_file:
+      - .env
+
+  carros_db:
+    image: postgres:17
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d carros"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+    env_file:
+      - .env
+ 
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    
+    env_file:
+      - .env
+      
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    ports:
+      - 4000:80
+    links:
+      - carros_db
+
+volumes:
+  postgres_data:
+  pgadmin_data:
+  app_data:
+

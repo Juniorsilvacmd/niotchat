@@ -138,7 +138,7 @@ export default function ProviderDataForm() {
       }
       
       console.log('[DEBUG ProviderDataForm] Dados do formulário:', dataToSend);
-      console.log('[DEBUG ProviderDataForm] Token:', token);
+              // Log removido por segurança
       
       if (form.id) {
         console.log('[DEBUG ProviderDataForm] Atualizando provedor existente');
@@ -276,7 +276,7 @@ export default function ProviderDataForm() {
 
                   <div>
                     <div className="flex items-center mb-2">
-                      <span className="text-sm">🎯</span>
+                      <span className="text-sm"># Debug logging removed for security</span>
                       <label className="block font-medium ml-2 text-foreground">Princípios</label>
                     </div>
                     <textarea

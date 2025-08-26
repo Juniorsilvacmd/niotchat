@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { BarChart2, MessageCircle, Eye, Users, Database, Megaphone, User, LogOut, Wifi } from 'lucide-react';
+import { BarChart2, MessageCircle, Eye, Users, Database, Megaphone, User, LogOut, Wifi, Settings } from 'lucide-react';
 
 const menu = [
   { key: 'dashboard', label: 'Dashboard', icon: <BarChart2 size={20} /> },
@@ -8,7 +8,7 @@ const menu = [
   { key: 'canais', label: 'Canais', icon: <MessageCircle size={20} /> },
   { key: 'auditoria', label: 'Auditoria', icon: <Eye size={20} /> },
   { key: 'usuarios-sistema', label: 'Usuários do Sistema', icon: <Users size={20} /> },
-  { key: 'admin-geral', label: 'Admin do Sistema', icon: <Database size={20} /> },
+  { key: 'configuracoes', label: 'Configurações do Sistema', icon: <Settings size={20} /> },
   { key: 'mensagem', label: 'Enviar Mensagem', icon: <Megaphone size={20} /> },
   { key: 'painel-empresa', label: 'Meu Painel de Empresa', icon: <User size={20} /> },
 ];

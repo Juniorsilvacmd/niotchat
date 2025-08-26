@@ -1,5 +1,0 @@
-[33m32b96ad[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m Removido Docker do sistema - migração para deploy nativo com systemd
-[33mb3b2836[m Melhorias no sistema de chat e integrações
-[33mfa7c973[m feat: atualizando repositório remoto com versão local
-[33m2f05a5d[m Sistema de deploy automatizado - Webhook, scripts e documentação
-[33mf292d5a[m Sistema completo NioChat - Frontend, Backend, WebSocket, IA integrada

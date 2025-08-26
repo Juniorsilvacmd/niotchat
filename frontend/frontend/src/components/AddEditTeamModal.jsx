@@ -25,8 +25,7 @@ const AddEditTeamModal = ({ isOpen, onClose, onSave, team }) => {
     const fetchUsers = async () => {
       try {
         const token = localStorage.getItem('token');
-        console.log('Buscando usuários com token:', token ? `Token: ${token.substring(0, 10)}...` : 'Token ausente');
-        console.log('Token completo:', token);
+        // Logs removidos por segurança
         console.log('URL da requisição:', '/api/users/');
         
         const response = await fetch('/api/users/', {
@@ -180,8 +179,6 @@ const AddEditTeamModal = ({ isOpen, onClose, onSave, team }) => {
     setSelectedItems([]);
   };
 
-
-
   if (!isOpen) return null;
 
   return (
@@ -207,8 +204,6 @@ const AddEditTeamModal = ({ isOpen, onClose, onSave, team }) => {
               className="text-foreground"
             />
           </div>
-
-
 
           {/* Membros */}
           <div>

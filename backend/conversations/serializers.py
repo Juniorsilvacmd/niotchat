@@ -50,7 +50,11 @@ class MessageSerializer(serializers.ModelSerializer):
         return obj.message_type
 
     def get_file_url(self, obj):
-        # Busca a URL do arquivo nos atributos adicionais
+        # Priorizar campo file_url direto do modelo
+        if obj.file_url:
+            return obj.file_url
+            
+        # Fallback para buscar nos atributos adicionais (retrocompatibilidade)
         if obj.additional_attributes:
             # Priorizar URL local se disponível
             local_url = obj.additional_attributes.get('local_file_url')

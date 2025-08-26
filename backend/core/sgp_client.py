@@ -45,7 +45,14 @@ class SGPClient:
         return requests.post(f'{self.base_url}/api/ura/chamado/', json={'cliente_id': cliente_id, 'motivo': motivo}, headers=self._headers()).json()
 
     def segunda_via_fatura(self, contrato):
-        return requests.post(f'{self.base_url}/api/ura/fatura2via/', json={'contrato': contrato}, headers=self._headers()).json()
+        # Enviar token apenas nos parâmetros (sem Content-Type para form-data)
+        data = {
+            'token': self.token,
+            'app': self.app_name,
+            'contrato': contrato
+        }
+        # Não enviar Content-Type para form-data!
+        return requests.post(f'{self.base_url}/api/ura/fatura2via/', data=data, headers=self._headers(include_content_type=False)).json()
 
     def gerar_pix(self, fatura):
         return requests.get(f'{self.base_url}/api/ura/pagamento/pix/{fatura}', headers=self._headers()).json()

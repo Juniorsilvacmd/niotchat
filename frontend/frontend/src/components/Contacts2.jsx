@@ -19,7 +19,7 @@ export default function Contacts() {
   const [showModal, setShowModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingContact, setEditingContact] = useState(null);
-  const [novoContato, setNovoContato] = useState({ nome: '', telefone: '+55', canal: 'WhatsApp' });
+  const [novoContato, setNovoContato] = useState({ nome: '', telefone: '+55', canal: 'WhatsApp', email: '' });
   const [contatos, setContatos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -86,16 +86,24 @@ export default function Contacts() {
     e.preventDefault();
     try {
       const token = localStorage.getItem('token');
-      const res = await axios.post('/api/contacts/', novoContato, {
+      
+      // Mapear os campos do frontend para o formato esperado pelo backend
+      const contactData = {
+        name: novoContato.nome,
+        phone: novoContato.telefone,
+        email: novoContato.email || '' // Email opcional
+      };
+      
+      const res = await axios.post('/api/contacts/', contactData, {
         headers: { Authorization: `Token ${token}` }
       });
       
       setContatos(prev => [...prev, res.data]);
-    setShowModal(false);
-    setNovoContato({ nome: '', telefone: '+55', canal: 'WhatsApp' });
+      setShowModal(false);
+      setNovoContato({ nome: '', telefone: '+55', canal: 'WhatsApp', email: '' });
     } catch (err) {
       console.error('Erro ao criar contato:', err);
-      alert('Erro ao criar contato');
+      alert('Erro ao criar contato: ' + (err.response?.data?.detail || err.message));
     }
   };
 
@@ -299,6 +307,9 @@ export default function Contacts() {
               </label>
               <label className="text-sm font-medium">Telefone
                 <input required className="mt-1 w-full border rounded px-2 py-1 bg-background" value={novoContato.telefone} onChange={e => setNovoContato({ ...novoContato, telefone: e.target.value })} placeholder="+55..." />
+              </label>
+              <label className="text-sm font-medium">Email (opcional)
+                <input type="email" className="mt-1 w-full border rounded px-2 py-1 bg-background" value={novoContato.email} onChange={e => setNovoContato({ ...novoContato, email: e.target.value })} placeholder="email@exemplo.com" />
               </label>
               <label className="text-sm font-medium">Canal
                 <select className="mt-1 w-full border rounded px-2 py-1 bg-background" value={novoContato.canal} onChange={e => setNovoContato({ ...novoContato, canal: e.target.value })}>

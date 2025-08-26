@@ -8,32 +8,62 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime, timedelta
 import redis
 import redis.asyncio as aioredis
-from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
 class RedisMemoryService:
     def __init__(self):
-        self.redis_url = getattr(settings, 'REDIS_URL', 'redis://localhost:6379/0')
+        # Usar configurações específicas da VPS
+        self.redis_url = 'redis://niochat:E0sJT3wAYFuahovmHkxgy@154.38.176.17:6379/0'
+        self.redis_host = '154.38.176.17'
+        self.redis_port = 6379
+        self.redis_db = 0
         self.redis = None
-        self.default_ttl = 24 * 60 * 60  # 24 horas em segundos
+        self.default_ttl = 2 * 60 * 60 + 20 * 60  # 2 horas e 20 minutos = 8400 segundos
+        
+        # Log da configuração
+        logger.info(f"Redis configurado para: {self.redis_url}")
+        logger.info(f"Host: {self.redis_host}, Port: {self.redis_port}, DB: {self.redis_db}")
         
     async def get_redis_connection(self):
         """Obtém conexão Redis assíncrona"""
         if not self.redis:
             try:
-                self.redis = aioredis.from_url(self.redis_url)
+                # Usar configurações específicas da VPS
+                redis_url = f"redis://{self.redis_host}:{self.redis_port}/{self.redis_db}"
+                self.redis = aioredis.from_url(
+                    redis_url,
+                    encoding="utf-8",
+                    decode_responses=True,
+                    socket_timeout=10,
+                    socket_connect_timeout=10,
+                    retry_on_timeout=True,
+                    health_check_interval=30
+                )
                 await self.redis.ping()
-                logger.info("Conexão Redis estabelecida com sucesso")
+                logger.info(f"Conexão Redis estabelecida com sucesso para {redis_url}")
             except Exception as e:
-                logger.error(f"Erro ao conectar com Redis: {e}")
+                logger.error(f"Erro ao conectar com Redis {self.redis_url}: {e}")
                 return None
         return self.redis
     
     def get_redis_sync(self):
         """Obtém conexão Redis síncrona para uso em funções não-assíncronas"""
         try:
-            return redis.from_url(self.redis_url)
+            # Usar configurações específicas da VPS com autenticação
+            return redis.Redis(
+                host=self.redis_host,
+                port=self.redis_port,
+                db=self.redis_db,
+                username='niochat',
+                password='E0sJT3wAYFuahovmHkxgy',
+                encoding="utf-8",
+                decode_responses=True,
+                socket_timeout=10,
+                socket_connect_timeout=10,
+                retry_on_timeout=True,
+                health_check_interval=30
+            )
         except Exception as e:
             logger.error(f"Erro ao conectar com Redis síncrono: {e}")
             return None
@@ -173,6 +203,89 @@ class RedisMemoryService:
             
         except Exception as e:
             logger.error(f"Erro ao limpar memória da conversa: {e}")
+            return False
+    
+    async def add_message_to_conversation(self, provedor_id: int, conversation_id: int, sender: str, content: str, message_type: str = "text") -> bool:
+        """Adiciona uma mensagem ao histórico da conversa no Redis"""
+        try:
+            # Obter memória atual da conversa
+            current_memory = await self.get_conversation_memory(provedor_id, conversation_id) or {}
+            
+            # Garantir que existe lista de mensagens
+            if 'messages' not in current_memory:
+                current_memory['messages'] = []
+            
+            # Adicionar nova mensagem
+            new_message = {
+                'sender': sender,  # 'customer' ou 'ai' ou 'agent'
+                'content': content,
+                'type': message_type,
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            current_memory['messages'].append(new_message)
+            
+            # Manter apenas últimas 50 mensagens para performance
+            if len(current_memory['messages']) > 50:
+                current_memory['messages'] = current_memory['messages'][-50:]
+            
+            # Salvar memória atualizada
+            return await self.set_conversation_memory(provedor_id, conversation_id, current_memory)
+            
+        except Exception as e:
+            logger.error(f"Erro ao adicionar mensagem à memória: {e}")
+            return False
+    
+    def add_message_to_conversation_sync(self, provedor_id: int, conversation_id: int, sender: str, content: str, message_type: str = "text") -> bool:
+        """Versão síncrona para adicionar mensagem ao histórico da conversa"""
+        try:
+            # Usar Redis diretamente para evitar recursão
+            redis_conn = self.get_redis_sync()
+            if not redis_conn:
+                return False
+                
+            key = f"conversation:{provedor_id}:{conversation_id}"
+            
+            # Tentar obter memória existente
+            try:
+                existing_data = redis_conn.get(key)
+                if existing_data:
+                    current_memory = json.loads(existing_data)
+                else:
+                    current_memory = {}
+            except:
+                current_memory = {}
+            
+            # Garantir que existe lista de mensagens
+            if 'messages' not in current_memory:
+                current_memory['messages'] = []
+            
+            # Adicionar nova mensagem
+            new_message = {
+                'sender': sender,  # 'customer' ou 'ai' ou 'agent'
+                'content': content,
+                'type': message_type,
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            current_memory['messages'].append(new_message)
+            
+            # Manter apenas últimas 50 mensagens para performance
+            if len(current_memory['messages']) > 50:
+                current_memory['messages'] = current_memory['messages'][-50:]
+            
+            # Adicionar timestamp de atualização
+            current_memory['last_updated'] = datetime.now().isoformat()
+            
+            # Salvar diretamente no Redis
+            ttl = self.default_ttl
+            redis_conn.setex(key, ttl, json.dumps(current_memory, ensure_ascii=False))
+            
+            logger.info(f"✅ Mensagem adicionada à memória Redis: {sender} - {content[:30]}...")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Erro ao adicionar mensagem à memória (síncrono): {e}")
             return False
     
     async def get_all_conversations_for_provedor(self, provedor_id: int) -> List[int]:

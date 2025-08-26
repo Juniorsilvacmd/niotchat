@@ -1,0 +1,97 @@
+{% extends "admin/base.html" %}
+
+{% block title %}{{ title }} | {{ site_title|default:_('Django site admin') }}{% endblock %}
+
+{% block nav-global %}
+{{ block.super }}
+
+<div style="background: #2c3e50; padding: 20px; margin-top: 20px; border-radius: 5px;">
+    <h3 style="color: #ecf0f1; margin: 0 0 15px 0; font-size: 16px;">🛠️ Ferramentas Administrativas</h3>
+    
+    <div style="margin-bottom: 15px;">
+        <a href="{% url 'admin:usuarios-sistema' %}" style="display: block; padding: 10px; color: #bdc3c7; text-decoration: none; background: #34495e; margin: 5px 0; border-radius: 3px;">
+            👥 Usuários do Sistema
+        </a>
+    </div>
+    
+    <div style="margin-bottom: 15px;">
+        <a href="{% url 'admin:limpeza-rapida' %}" style="display: block; padding: 10px; color: #bdc3c7; text-decoration: none; background: #34495e; margin: 5px 0; border-radius: 3px;">
+            🧹 Limpeza Rápida de Dados
+        </a>
+    </div>
+    
+    <div style="margin-bottom: 15px;">
+        <a href="{% url 'admin:core_limpezadadosprovedor_changelist' %}" style="display: block; padding: 10px; color: #bdc3c7; text-decoration: none; background: #34495e; margin: 5px 0; border-radius: 3px;">
+            📋 Histórico de Limpezas
+        </a>
+    </div>
+    
+    <h3 style="color: #ecf0f1; margin: 20px 0 15px 0; font-size: 16px;">📊 Gerenciamento</h3>
+    
+    <div style="margin-bottom: 15px;">
+        <a href="{% url 'admin:core_provedor_changelist' %}" style="display: block; padding: 10px; color: #bdc3c7; text-decoration: none; background: #34495e; margin: 5px 0; border-radius: 3px;">
+            🏢 Provedores
+        </a>
+    </div>
+    
+    <div style="margin-bottom: 15px;">
+        <a href="{% url 'admin:core_canal_changelist' %}" style="display: block; padding: 10px; color: #bdc3c7; text-decoration: none; background: #34495e; margin: 5px 0; border-radius: 3px;">
+            📡 Canais
+        </a>
+    </div>
+    
+    <div style="margin-bottom: 15px;">
+        <a href="{% url 'admin:core_auditlog_changelist' %}" style="display: block; padding: 10px; color: #bdc3c7; text-decoration: none; background: #34495e; margin: 5px 0; border-radius: 3px;">
+            👁️ Auditoria
+        </a>
+    </div>
+</div>
+{% endblock %} 
+
+{% block title %}{{ title }} | {{ site_title|default:_('Django site admin') }}{% endblock %}
+
+{% block nav-global %}
+{{ block.super }}
+
+<div style="background: #2c3e50; padding: 20px; margin-top: 20px; border-radius: 5px;">
+    <h3 style="color: #ecf0f1; margin: 0 0 15px 0; font-size: 16px;">🛠️ Ferramentas Administrativas</h3>
+    
+    <div style="margin-bottom: 15px;">
+        <a href="{% url 'admin:usuarios-sistema' %}" style="display: block; padding: 10px; color: #bdc3c7; text-decoration: none; background: #34495e; margin: 5px 0; border-radius: 3px;">
+            👥 Usuários do Sistema
+        </a>
+    </div>
+    
+    <div style="margin-bottom: 15px;">
+        <a href="{% url 'admin:limpeza-rapida' %}" style="display: block; padding: 10px; color: #bdc3c7; text-decoration: none; background: #34495e; margin: 5px 0; border-radius: 3px;">
+            🧹 Limpeza Rápida de Dados
+        </a>
+    </div>
+    
+    <div style="margin-bottom: 15px;">
+        <a href="{% url 'admin:core_limpezadadosprovedor_changelist' %}" style="display: block; padding: 10px; color: #bdc3c7; text-decoration: none; background: #34495e; margin: 5px 0; border-radius: 3px;">
+            📋 Histórico de Limpezas
+        </a>
+    </div>
+    
+    <h3 style="color: #ecf0f1; margin: 20px 0 15px 0; font-size: 16px;">📊 Gerenciamento</h3>
+    
+    <div style="margin-bottom: 15px;">
+        <a href="{% url 'admin:core_provedor_changelist' %}" style="display: block; padding: 10px; color: #bdc3c7; text-decoration: none; background: #34495e; margin: 5px 0; border-radius: 3px;">
+            🏢 Provedores
+        </a>
+    </div>
+    
+    <div style="margin-bottom: 15px;">
+        <a href="{% url 'admin:core_canal_changelist' %}" style="display: block; padding: 10px; color: #bdc3c7; text-decoration: none; background: #34495e; margin: 5px 0; border-radius: 3px;">
+            📡 Canais
+        </a>
+    </div>
+    
+    <div style="margin-bottom: 15px;">
+        <a href="{% url 'admin:core_auditlog_changelist' %}" style="display: block; padding: 10px; color: #bdc3c7; text-decoration: none; background: #34495e; margin: 5px 0; border-radius: 3px;">
+            👁️ Auditoria
+        </a>
+    </div>
+</div>
+{% endblock %} 

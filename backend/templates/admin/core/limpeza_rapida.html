@@ -1,0 +1,465 @@
+{% extends "admin/base_site.html" %}
+{% load i18n admin_urls static admin_list %}
+
+{% block title %}Limpeza Rápida de Dados - {{ site_title|default:_('Django site admin') }}{% endblock %}
+
+{% block extrastyle %}
+<style>
+    .limpeza-container {
+        max-width: 800px;
+        margin: 20px auto;
+        padding: 20px;
+        background: #fff;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    
+    .limpeza-header {
+        text-align: center;
+        margin-bottom: 30px;
+        padding-bottom: 20px;
+        border-bottom: 2px solid #e0e0e0;
+    }
+    
+    .limpeza-header h1 {
+        color: #333;
+        margin: 0;
+        font-size: 24px;
+    }
+    
+    .limpeza-form {
+        background: #f8f9fa;
+        padding: 25px;
+        border-radius: 6px;
+        margin-bottom: 25px;
+    }
+    
+    .form-group {
+        margin-bottom: 20px;
+    }
+    
+    .form-group label {
+        display: block;
+        margin-bottom: 8px;
+        font-weight: 600;
+        color: #333;
+    }
+    
+    .form-group select,
+    .form-group input {
+        width: 100%;
+        padding: 12px;
+        border: 2px solid #ddd;
+        border-radius: 4px;
+        font-size: 14px;
+        transition: border-color 0.3s;
+    }
+    
+    .form-group select:focus,
+    .form-group input:focus {
+        outline: none;
+        border-color: #007cba;
+        box-shadow: 0 0 0 3px rgba(0,124,186,0.1);
+    }
+    
+    .btn-limpar {
+        background: #dc3545;
+        color: white;
+        border: none;
+        padding: 12px 30px;
+        border-radius: 4px;
+        font-size: 16px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background-color 0.3s;
+        width: 100%;
+    }
+    
+    .btn-limpar:hover {
+        background: #c82333;
+    }
+    
+    .btn-limpar:disabled {
+        background: #6c757d;
+        cursor: not-allowed;
+    }
+    
+    .alert {
+        padding: 15px;
+        margin-bottom: 20px;
+        border-radius: 4px;
+        border-left: 4px solid;
+    }
+    
+    .alert-success {
+        background: #d4edda;
+        border-color: #28a745;
+        color: #155724;
+    }
+    
+    .alert-danger {
+        background: #f8d7da;
+        border-color: #dc3545;
+        color: #721c24;
+    }
+    
+    .info-box {
+        background: #e7f3ff;
+        border: 1px solid #b3d9ff;
+        border-radius: 4px;
+        padding: 15px;
+        margin-bottom: 20px;
+    }
+    
+    .info-box h3 {
+        margin: 0 0 10px 0;
+        color: #0066cc;
+        font-size: 16px;
+    }
+    
+    .info-box p {
+        margin: 0;
+        color: #333;
+        line-height: 1.5;
+    }
+    
+    .warning-box {
+        background: #fff3cd;
+        border: 1px solid #ffeaa7;
+        border-radius: 4px;
+        padding: 15px;
+        margin-bottom: 20px;
+    }
+    
+    .warning-box h3 {
+        margin: 0 0 10px 0;
+        color: #856404;
+        font-size: 16px;
+    }
+    
+    .warning-box p {
+        margin: 0;
+        color: #333;
+        line-height: 1.5;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="limpeza-container">
+    <div class="limpeza-header">
+        <h1>🧹 Limpeza Rápida de Dados</h1>
+        <p>Limpe dados de Redis e banco de dados de provedores específicos</p>
+    </div>
+    
+    {% if mensagem_sucesso %}
+    <div class="alert alert-success">
+        <strong>✅ Sucesso!</strong> {{ mensagem_sucesso }}
+    </div>
+    {% endif %}
+    
+    {% if mensagem_erro %}
+    <div class="alert alert-danger">
+        <strong>❌ Erro!</strong> {{ mensagem_erro }}
+    </div>
+    {% endif %}
+    
+    <div class="warning-box">
+        <h3>⚠️ ATENÇÃO!</h3>
+        <p>Esta operação irá <strong>REMOVER PERMANENTEMENTE</strong> todos os dados do provedor selecionado. Esta ação não pode ser desfeita!</p>
+    </div>
+    
+    <div class="info-box">
+        <h3>ℹ️ Como funciona:</h3>
+        <p><strong>Redis:</strong> Remove todas as chaves de memória e histórico de conversas</p>
+        <p><strong>Banco de Dados:</strong> Remove conversas, mensagens e contatos do provedor</p>
+        <p><strong>Limpeza Completa:</strong> Remove dados de Redis e banco simultaneamente</p>
+    </div>
+    
+    <form method="post" class="limpeza-form">
+        {% csrf_token %}
+        
+        <div class="form-group">
+            <label for="provedor_id">Selecione o Provedor:</label>
+            <select name="provedor_id" id="provedor_id" required>
+                <option value="">-- Escolha um provedor --</option>
+                {% for provedor in provedores %}
+                <option value="{{ provedor.id }}">{{ provedor.id }} - {{ provedor.nome }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        
+        <div class="form-group">
+            <label for="tipo_limpeza">Tipo de Limpeza:</label>
+            <select name="tipo_limpeza" id="tipo_limpeza">
+                <option value="completa">🔄 Limpeza Completa (Redis + Banco)</option>
+                <option value="redis">🔴 Apenas Redis</option>
+                <option value="banco">🗄️ Apenas Banco de Dados</option>
+            </select>
+        </div>
+        
+        <button type="submit" class="btn-limpar" onclick="return confirm('⚠️ ATENÇÃO! Esta ação irá REMOVER PERMANENTEMENTE todos os dados do provedor selecionado. Tem certeza que deseja continuar?')">
+            🧹 EXECUTAR LIMPEZA
+        </button>
+    </form>
+    
+    <div class="info-box">
+        <h3>📋 Histórico de Limpezas:</h3>
+        <p>Para ver o histórico completo de limpezas executadas, acesse: <a href="{% url 'admin:core_limpezadadosprovedor_changelist' %}">Limpezas de Dados dos Provedores</a></p>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.querySelector('.limpeza-form');
+    const btnLimpar = document.querySelector('.btn-limpar');
+    
+    form.addEventListener('submit', function(e) {
+        const provedorId = document.getElementById('provedor_id').value;
+        const tipoLimpeza = document.getElementById('tipo_limpeza').value;
+        
+        if (!provedorId) {
+            e.preventDefault();
+            alert('Por favor, selecione um provedor!');
+            return;
+        }
+        
+        // Desabilitar botão durante execução
+        btnLimpar.disabled = true;
+        btnLimpar.textContent = '🔄 Executando...';
+    });
+});
+</script>
+{% endblock %} 
+{% load i18n admin_urls static admin_list %}
+
+{% block title %}Limpeza Rápida de Dados - {{ site_title|default:_('Django site admin') }}{% endblock %}
+
+{% block extrastyle %}
+<style>
+    .limpeza-container {
+        max-width: 800px;
+        margin: 20px auto;
+        padding: 20px;
+        background: #fff;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    
+    .limpeza-header {
+        text-align: center;
+        margin-bottom: 30px;
+        padding-bottom: 20px;
+        border-bottom: 2px solid #e0e0e0;
+    }
+    
+    .limpeza-header h1 {
+        color: #333;
+        margin: 0;
+        font-size: 24px;
+    }
+    
+    .limpeza-form {
+        background: #f8f9fa;
+        padding: 25px;
+        border-radius: 6px;
+        margin-bottom: 25px;
+    }
+    
+    .form-group {
+        margin-bottom: 20px;
+    }
+    
+    .form-group label {
+        display: block;
+        margin-bottom: 8px;
+        font-weight: 600;
+        color: #333;
+    }
+    
+    .form-group select,
+    .form-group input {
+        width: 100%;
+        padding: 12px;
+        border: 2px solid #ddd;
+        border-radius: 4px;
+        font-size: 14px;
+        transition: border-color 0.3s;
+    }
+    
+    .form-group select:focus,
+    .form-group input:focus {
+        outline: none;
+        border-color: #007cba;
+        box-shadow: 0 0 0 3px rgba(0,124,186,0.1);
+    }
+    
+    .btn-limpar {
+        background: #dc3545;
+        color: white;
+        border: none;
+        padding: 12px 30px;
+        border-radius: 4px;
+        font-size: 16px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background-color 0.3s;
+        width: 100%;
+    }
+    
+    .btn-limpar:hover {
+        background: #c82333;
+    }
+    
+    .btn-limpar:disabled {
+        background: #6c757d;
+        cursor: not-allowed;
+    }
+    
+    .alert {
+        padding: 15px;
+        margin-bottom: 20px;
+        border-radius: 4px;
+        border-left: 4px solid;
+    }
+    
+    .alert-success {
+        background: #d4edda;
+        border-color: #28a745;
+        color: #155724;
+    }
+    
+    .alert-danger {
+        background: #f8d7da;
+        border-color: #dc3545;
+        color: #721c24;
+    }
+    
+    .info-box {
+        background: #e7f3ff;
+        border: 1px solid #b3d9ff;
+        border-radius: 4px;
+        padding: 15px;
+        margin-bottom: 20px;
+    }
+    
+    .info-box h3 {
+        margin: 0 0 10px 0;
+        color: #0066cc;
+        font-size: 16px;
+    }
+    
+    .info-box p {
+        margin: 0;
+        color: #333;
+        line-height: 1.5;
+    }
+    
+    .warning-box {
+        background: #fff3cd;
+        border: 1px solid #ffeaa7;
+        border-radius: 4px;
+        padding: 15px;
+        margin-bottom: 20px;
+    }
+    
+    .warning-box h3 {
+        margin: 0 0 10px 0;
+        color: #856404;
+        font-size: 16px;
+    }
+    
+    .warning-box p {
+        margin: 0;
+        color: #333;
+        line-height: 1.5;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="limpeza-container">
+    <div class="limpeza-header">
+        <h1>🧹 Limpeza Rápida de Dados</h1>
+        <p>Limpe dados de Redis e banco de dados de provedores específicos</p>
+    </div>
+    
+    {% if mensagem_sucesso %}
+    <div class="alert alert-success">
+        <strong>✅ Sucesso!</strong> {{ mensagem_sucesso }}
+    </div>
+    {% endif %}
+    
+    {% if mensagem_erro %}
+    <div class="alert alert-danger">
+        <strong>❌ Erro!</strong> {{ mensagem_erro }}
+    </div>
+    {% endif %}
+    
+    <div class="warning-box">
+        <h3>⚠️ ATENÇÃO!</h3>
+        <p>Esta operação irá <strong>REMOVER PERMANENTEMENTE</strong> todos os dados do provedor selecionado. Esta ação não pode ser desfeita!</p>
+    </div>
+    
+    <div class="info-box">
+        <h3>ℹ️ Como funciona:</h3>
+        <p><strong>Redis:</strong> Remove todas as chaves de memória e histórico de conversas</p>
+        <p><strong>Banco de Dados:</strong> Remove conversas, mensagens e contatos do provedor</p>
+        <p><strong>Limpeza Completa:</strong> Remove dados de Redis e banco simultaneamente</p>
+    </div>
+    
+    <form method="post" class="limpeza-form">
+        {% csrf_token %}
+        
+        <div class="form-group">
+            <label for="provedor_id">Selecione o Provedor:</label>
+            <select name="provedor_id" id="provedor_id" required>
+                <option value="">-- Escolha um provedor --</option>
+                {% for provedor in provedores %}
+                <option value="{{ provedor.id }}">{{ provedor.id }} - {{ provedor.nome }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        
+        <div class="form-group">
+            <label for="tipo_limpeza">Tipo de Limpeza:</label>
+            <select name="tipo_limpeza" id="tipo_limpeza">
+                <option value="completa">🔄 Limpeza Completa (Redis + Banco)</option>
+                <option value="redis">🔴 Apenas Redis</option>
+                <option value="banco">🗄️ Apenas Banco de Dados</option>
+            </select>
+        </div>
+        
+        <button type="submit" class="btn-limpar" onclick="return confirm('⚠️ ATENÇÃO! Esta ação irá REMOVER PERMANENTEMENTE todos os dados do provedor selecionado. Tem certeza que deseja continuar?')">
+            🧹 EXECUTAR LIMPEZA
+        </button>
+    </form>
+    
+    <div class="info-box">
+        <h3>📋 Histórico de Limpezas:</h3>
+        <p>Para ver o histórico completo de limpezas executadas, acesse: <a href="{% url 'admin:core_limpezadadosprovedor_changelist' %}">Limpezas de Dados dos Provedores</a></p>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.querySelector('.limpeza-form');
+    const btnLimpar = document.querySelector('.btn-limpar');
+    
+    form.addEventListener('submit', function(e) {
+        const provedorId = document.getElementById('provedor_id').value;
+        const tipoLimpeza = document.getElementById('tipo_limpeza').value;
+        
+        if (!provedorId) {
+            e.preventDefault();
+            alert('Por favor, selecione um provedor!');
+            return;
+        }
+        
+        // Desabilitar botão durante execução
+        btnLimpar.disabled = true;
+        btnLimpar.textContent = '🔄 Executando...';
+    });
+});
+</script>
+{% endblock %} 

@@ -10,7 +10,7 @@ class UazapiSSEManager:
     def __init__(self):
         self.connections = {}  # token: task
         self.provedor_url_map = {}  # provedor_id: url_base
-        self.redis = aioredis.from_url('redis://localhost:6379/0')
+        self.redis = aioredis.from_url('redis://niochat:E0sJT3wAYFuahovmHkxgy@154.38.176.17:6379/0')
         self.channel_layer = get_channel_layer()
 
     async def start_sse(self, token, provedor_id):
